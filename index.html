@@ -44,9 +44,7 @@ const firebaseConfig = {
   measurementId: "G-S36T3HV2PT"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
+
         
         // 初始化 Firebase
         let app, db;
@@ -54,6 +52,9 @@ const analytics = getAnalytics(app);
             app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             console.log("✅ Firebase 模組載入成功");
+
+            // Initialize Firebase
+const analytics = getAnalytics(app);
             
             // 標記模組已成功載入
             window.firebaseModuleLoaded = true;
@@ -861,3 +862,4 @@ const analytics = getAnalytics(app);
 </body>
 
 </html>
+
