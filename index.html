@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全級學術成績分析系統 (V19.4 排序修正版)</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-statistics/7.7.0/simple-statistics.min.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+
+        // ⚠️⚠️⚠️ 【請在此填入您的 Firebase Config】 ⚠️⚠️⚠️
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBYtaDjYgO0F2qlvWgmeMavE0SUBTzFONU",
+  authDomain: "school-grade-analysis-ed4e1.firebaseapp.com",
+  projectId: "school-grade-analysis-ed4e1",
+  storageBucket: "school-grade-analysis-ed4e1.firebasestorage.app",
+  messagingSenderId: "119965796660",
+  appId: "1:119965796660:web:55e160b8eab960ab157d61",
+  measurementId: "G-S36T3HV2PT"
+};
+
+        // 初始化 Firebase
+        let app, db;
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+	    const analytics = getAnalytics(app);
+            console.log("✅ Firebase 模組載入成功");
+            // 標記模組已就緒
+            window.isFirebaseReady = true;
+        } catch (e) {
+            console.error("Firebase 初始化失敗:", e);
+            window.firebaseError = e.message;
+        }
+
+        // --- 將雲端功能強制掛載到全域 window ---
+
+        window.saveToCloud_Impl = async function() {
+            const grade = window.currentGrade;
+            
+            if (!db) { 
+                alert("❌ 雲端連線失敗！\n原因：請檢查程式碼第 27 行的 Firebase Config 是否已填寫正確。\n(目前僅能使用單機分析功能)"); 
+                return; 
+            }
+
+            if(!window.processedDataExport) { 
+                alert("❌ 沒有數據可儲存！\n請先上傳 CSV 檔案並點擊「開始分析」。"); return; 
+            }
+            
+            const btn = document.getElementById('btnSaveCloud');
+            const originalText = btn.innerText;
+            btn.innerText = "☁️ 儲存中...";
+            btn.disabled = true;
+
+            try {
+                // 處理 NaN
+                const jsonString = JSON.stringify(window.processedDataExport, (key, val) => 
+                    (typeof val === 'number' && isNaN(val)) ? "###NaN###" : val
+                );
+                
+                await setDoc(doc(db, "grades", grade), { 
+                    data: JSON.parse(jsonString), 
+                    updatedAt: new Date().toLocaleString() 
+                });
+                
+                alert(`✅ P${grade} 數據已成功上傳！`);
+                document.getElementById('cloudStatus').innerText = `✅ P${grade} 數據已同步 (更新於: ${new Date().toLocaleString()})`;
+            } catch (e) {
+                console.error(e);
+                alert("❌ 儲存失敗 (權限或網絡錯誤)：" + e.message);
+            }
+            btn.innerText = originalText;
+            btn.disabled = false;
+        };
+
+        window.loadFromCloud_Impl = async function(grade) {
+            const statusDiv = document.getElementById('cloudStatus');
+            statusDiv.innerText = `⏳ 讀取 P${grade} 中...`;
+            
+            if (!db) { 
+                statusDiv.innerText = "⚠️ 雲端未連接 (請檢查 Config)";
+                window.resetToUploadMode();
+                return; 
+            }
+
+            try {
+                const docRef = doc(db, "grades", grade);
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    const savedData = docSnap.data().data;
+                    const cleanData = JSON.parse(JSON.stringify(savedData), (k, v) => v === "###NaN###" ? NaN : v);
+                    
+                    window.processedData = cleanData.processedData;
+                    window.classStats = cleanData.classStats;
+                    window.globalMeans = cleanData.globalMeans;
+                    window.globalSDs = cleanData.globalSDs;
+                    window.processedDataExport = cleanData;
+
+                    window.restoreDashboardUI();
+                    statusDiv.innerText = `✅ 已載入 P${grade} (更新於: ${docSnap.data().updatedAt})`;
+                } else {
+                    statusDiv.innerText = `ℹ️ P${grade} 尚無雲端數據，請上傳檔案。`;
+                    window.resetToUploadMode();
+                }
+            } catch (e) {
+                console.error(e);
+                statusDiv.innerText = `❌ 讀取錯誤: ${e.message}`;
+            }
+        };
+    </script>
+
+    <style>
+        /* 樣式保持不變 */
+        body { font-family: "Microsoft JhengHei", "Heiti TC", sans-serif; background-color: #f4f4f9; margin: 0; padding: 10px; color: #333; }
+        .container { width: 98%; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); box-sizing: border-box; }
+        
+        .nav-bar { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 10px; overflow-x: auto; }
+        .nav-btn { flex: 1; min-width: 60px; padding: 12px; border: none; background: #e0e0e0; cursor: pointer; font-size: 1.1em; font-weight: bold; border-radius: 8px 8px 0 0; color: #555; transition: 0.2s; }
+        .nav-btn:hover { background: #d0d0d0; }
+        .nav-btn.active { background: #007bff; color: white; transform: translateY(-2px); box-shadow: 0 -2px 5px rgba(0,0,0,0.1); }
+        .grade-badge { background: #007bff; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.6em; vertical-align: middle; margin-left: 8px; }
+
+        .cloud-status-bar { background: #fff3e0; color: #e65100; padding: 10px; text-align: center; border-radius: 5px; border: 1px solid #ffe0b2; font-weight: bold; margin-bottom: 20px; }
+        .cloud-actions { display: none; gap: 15px; justify-content: center; margin-bottom: 20px; padding: 15px; background: #f1f8ff; border-radius: 8px; border: 1px solid #cce5ff; flex-wrap: wrap; }
+        .cloud-btn { padding: 10px 20px; background-color: #17a2b8; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+        .cloud-btn:hover { background-color: #138496; }
+        .reset-btn { padding: 10px 20px; background-color: #6c757d; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
+        .modify-btn { padding: 10px 20px; background-color: #ffc107; color: #333; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
+        
+        h1, h2 { text-align: center; color: #2c3e50; }
+        h2 { border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 40px; background-color: #e8f5e9; padding: 10px; border-radius: 5px; color: #2e7d32; }
+
+        .control-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; padding: 15px; background-color: #e9ecef; border-radius: 8px; margin-bottom: 20px; border: 1px solid #dee2e6; }
+        .encoding-setting { grid-column: 1 / -1; background: #fff3cd; padding: 8px; border-radius: 5px; text-align: center; border: 1px solid #ffeeba; }
+        
+        .settings-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; grid-column: 1 / -1; }
+        .settings-group { background: #fff; padding: 15px; border-radius: 5px; border: 1px solid #ced4da; margin-top: 10px; display: none; }
+        .settings-group.full-width { grid-column: 1 / -1; }
+        .settings-group h3 { margin-top: 0; margin-bottom: 10px; font-size: 1.1em; color: #495057; border-bottom: 2px solid #007bff; display: inline-block; padding-bottom: 3px; }
+        .selector-item { margin-bottom: 10px; }
+        .selector-item label { font-weight: bold; font-size: 0.9em; display: block; margin-bottom: 3px; color: #555; }
+        .selector-item select { width: 100%; padding: 6px; border-radius: 4px; border: 1px solid #aaa; }
+        .auto-tag { font-size: 0.8em; color: #28a745; margin-left: 5px; background: #e6ffed; padding: 2px 5px; border-radius: 3px; }
+
+        button.primary-btn { grid-column: 1 / -1; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 5px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.3s; width: 100%; }
+        button.primary-btn:hover { background-color: #0056b3; }
+        .error-msg { color: red; font-weight: bold; text-align: center; margin-top: 10px; }
+        .success-msg { color: green; font-weight: bold; font-size: 0.9em; margin-top: 5px; }
+
+        .report-header { display: none; background: #d4edda; color: #155724; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #c3e6cb; }
+        .stats-banner { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; display: none; }
+        .stat-card { background: #f8f9fa; padding: 10px; border-radius: 5px; text-align: center; border: 1px solid #ddd; }
+        .stat-val { font-weight: bold; color: #007bff; font-size: 1.1em; }
+        
+        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+        .chart-box { border: 1px solid #ddd; padding: 15px; border-radius: 8px; background: #fff; position: relative; margin-bottom: 20px; }
+        .chart-box.full { grid-column: 1 / -1; } 
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .chart-title { font-weight: bold; font-size: 1.1em; color: #444; }
+        .download-btn { background-color: #6c757d; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; display: flex; align-items: center; gap: 5px; }
+        
+        .risk-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .risk-table th { background-color: #c53030; color: white; padding: 8px; text-align: center; }
+        .risk-table td { border: 1px solid #feb2b2; padding: 8px; text-align: center; background: white; }
+        .risk-val { color: #c53030; font-weight: bold; }
+        
+        .ranking-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 10px; }
+        .rank-table th.imp { background-color: #2ca02c; } .rank-table th.reg { background-color: #d62728; }
+        .rank-table td { border: 1px solid #ddd; }
+        .val-imp { color: #2ca02c; font-weight: bold; } .val-reg { color: #d62728; font-weight: bold; }
+
+        .detail-control { text-align: center; margin: 20px 0; background: #e3f2fd; padding: 15px; border-radius: 5px; display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; align-items: center; }
+        .chart-wrapper { width: 100%; overflow-x: auto; border: 1px solid #eee; border-radius: 4px; padding: 10px; position: relative; }
+        #chart-main { width: 100%; min-width: 1200px; height: 900px; }
+        .score-display { font-weight: bold; color: #d35400; background: #fff; padding: 5px 10px; border-radius: 4px; margin-left: 10px; border: 1px solid #eee; }
+
+        .ai-container { display: flex; flex-direction: column; height: 600px; border: 1px solid #ddd; border-radius: 8px; background: #fdfdfd; overflow: hidden; }
+        .ai-chat-window { flex: 1; padding: 20px; overflow-y: auto; background-color: #f5f7fa; }
+        .chat-bubble { max-width: 80%; margin-bottom: 15px; padding: 15px; border-radius: 15px; line-height: 1.5; font-size: 15px; }
+        .chat-ai { background-color: #ffffff; border: 1px solid #e1e4e8; align-self: flex-start; margin-right: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .ai-input-area { padding: 15px; background: white; border-top: 1px solid #ddd; }
+        .copy-prompt-btn { padding: 10px; background-color: #28a745; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; width: 100%; }
+        .footer { text-align: center; margin-top: 30px; color: #777; font-size: 0.9em; }
+        
+        .mapping-box { grid-column: 1/-1; background: white; padding: 15px; border: 1px solid #ced4da; border-radius: 5px; display: none; border-left: 5px solid #28a745; margin-bottom: 10px;}
+        .mapping-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+        
+        @media (max-width: 1000px) { .dashboard-grid, .ranking-grid, .settings-container { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📊 全級學術成績分析系統 <span id="currentGradeBadge" class="grade-badge">P1</span></h1>
+    <div style="text-align: center; color: #666; font-size: 0.9em; margin-bottom: 15px;">V19.4 (排序修正 + 雲端增強)</div>
+
+    <div class="nav-bar">
+        <button class="nav-btn active" onclick="window.switchGradeUI('1')">P1</button>
+        <button class="nav-btn" onclick="window.switchGradeUI('2')">P2</button>
+        <button class="nav-btn" onclick="window.switchGradeUI('3')">P3</button>
+        <button class="nav-btn" onclick="window.switchGradeUI('4')">P4</button>
+        <button class="nav-btn" onclick="window.switchGradeUI('5')">P5</button>
+        <button class="nav-btn" onclick="window.switchGradeUI('6')">P6</button>
+    </div>
+
+    <div id="cloudStatus" class="cloud-status-bar">準備就緒，請上傳檔案或讀取雲端數據。</div>
+
+    <div id="reportHeader" class="report-header">
+        ✅ <b>雲端資料檢視模式</b><br>
+        如需分析新數據，請點擊「重新上傳」。
+    </div>
+
+    <div class="control-panel" id="mainControlPanel">
+        <div class="encoding-setting">
+            <label>🔧 檔案編碼：</label>
+            <select id="encodingSelect" onchange="window.resetData()">
+                <option value="Big5" selected>Big5 (Excel 預設)</option>
+                <option value="UTF-8">UTF-8 (通用)</option>
+            </select>
+        </div>
+        
+        <div><label>1. 學生資料 (StuInfo)</label><input type="file" id="fileInfo" accept=".csv" onchange="window.handleFileSelect(this, 'info')"><div id="msg-info" class="success-msg"></div></div>
+        <div><label>2. 舊成績 (上學期)</label><input type="file" id="fileOld" accept=".csv" onchange="window.handleFileSelect(this, 'old')"><div id="msg-old" class="success-msg"></div></div>
+        <div><label>3. 新成績 (下學期)</label><input type="file" id="fileNew" accept=".csv" onchange="window.handleFileSelect(this, 'new')"><div id="msg-new" class="success-msg"></div></div>
+
+        <div class="settings-container">
+            <div id="stuSettings" class="settings-group full-width">
+                <h3>👤 1. 學生資料欄位設定</h3>
+                <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                    <div class="selector-item" style="flex: 1;"><label>🏫 班別:</label><select id="colClass"></select></div>
+                    <div class="selector-item" style="flex: 1;"><label>📛 姓名:</label><select id="colName"></select></div>
+                    <div class="selector-item" style="flex: 1;"><label>🆔 註冊編號:</label><select id="colRegInfo"></select></div>
+                </div>
+            </div>
+            <div id="oldScoreSettings" class="settings-group">
+                <h3>📂 2. 舊成績欄位</h3>
+                <div class="selector-item"><label>🆔 註冊編號:</label><select id="colOldReg"></select></div>
+                <div class="selector-item"><label>📖 中文科:</label><select id="colOldChi"></select></div>
+                <div class="selector-item"><label>🔤 英文科:</label><select id="colOldEng"></select></div>
+                <div class="selector-item"><label>🔢 數學科:</label><select id="colOldMath"></select></div>
+            </div>
+            <div id="newScoreSettings" class="settings-group">
+                <h3>📂 3. 新成績欄位</h3>
+                <div class="selector-item"><label>🆔 註冊編號:</label><select id="colNewReg"></select></div>
+                <div class="selector-item"><label>🔢 班號 (Class No.):</label><select id="colNewClassNum"></select></div>
+                <div class="selector-item"><label>📖 中文科:</label><select id="colNewChi"></select></div>
+                <div class="selector-item"><label>🔤 英文科:</label><select id="colNewEng"></select></div>
+                <div class="selector-item"><label>🔢 數學科:</label><select id="colNewMath"></select></div>
+            </div>
+        </div>
+
+        <button class="primary-btn" onclick="window.processData()">🚀 開始分析</button>
+        <div id="statusMsg" class="error-msg"></div>
+    </div>
+
+    <div id="cloudActions" class="cloud-actions">
+        <button class="reset-btn" onclick="window.resetToUploadMode()">🗑️ 清除/重新上傳</button>
+        <button class="modify-btn" onclick="window.editSettings()">📝 修改欄位/重新分析</button>
+        <button id="btnSaveCloud" class="cloud-btn" onclick="window.trySaveCloud()">☁️ 儲存 P1 至雲端</button>
+    </div>
+
+    <div id="stats-banner" class="stats-banner"></div>
+
+    <div id="macro-section" style="display:none;">
+        <h2>🏫 第一部分：全級宏觀分析 (相對進退步)</h2>
+        <div style="text-align:center; margin-bottom:15px;">
+            <label style="font-weight:bold;">選擇科目：</label>
+            <select id="macroSubjectSelect" onchange="updateMacroCharts()" style="padding:5px 15px; font-size:16px;">
+                <option value="chi">中文科</option>
+                <option value="eng">英文科</option>
+                <option value="math">數學科</option>
+            </select>
+            <span id="macro-score-diff" class="score-display">--</span>
+        </div>
+        <div class="dashboard-grid">
+            <div class="chart-box"><div class="chart-header"><span class="chart-title">各班 相對進步 vs 相對退步 人數</span><button class="download-btn" onclick="downloadChart('chart-bar-stats', '班級進退步分佈')">📸 下載</button></div><div id="chart-bar-stats" style="height: 400px;"></div></div>
+            <div class="chart-box"><div class="chart-header"><span class="chart-title">各班平均分 vs 全級平均線</span><button class="download-btn" onclick="downloadChart('chart-line-avg', '班級平均分趨勢')">📸 下載</button></div><div id="chart-line-avg" style="height: 400px;"></div></div>
+            <div class="chart-box full"><div class="chart-header"><span class="chart-title">📈 全級成績分佈隊形 vs 常態分佈線 (Bins=4)</span><button class="download-btn" onclick="downloadChart('chart-dist', '全級成績分佈')">📸 下載</button></div><div id="chart-dist" style="height: 500px;"></div></div>
+        </div>
+    </div>
+
+    <div id="risk-section" class="alert-box" style="display:none;">
+        <div class="alert-title" style="background:#c53030; color:white; padding:10px; font-weight:bold; border-radius:5px 5px 0 0;">⚠️ 第二部分：重點關注 - 全科相對退步 (中+英+數)</div>
+        <table class="risk-table" id="riskTable"><thead><tr><th>班別</th><th>姓名</th><th>中</th><th>英</th><th>數</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div id="ranking-section" class="chart-box" style="display:none; margin-top:40px;">
+        <div class="chart-header"><span class="chart-title">🏆 第三部分：各科相對表現排行榜 (前20名)</span><button class="download-btn" onclick="downloadDiv('ranking-container', '排行榜')">📸 下載</button></div>
+        <div id="ranking-container">
+            <div style="text-align:center; padding: 10px;"><label>科目：</label><select id="rankSubjectSelect" onchange="updateRankings()"><option value="chi">中文</option><option value="eng">英文</option><option value="math">數學</option></select></div>
+            <div class="ranking-grid">
+                <div class="ranking-col"><h3 style="color:#2ca02c; text-align:center;">🚀 相對進步</h3><table class="risk-table rank-table"><thead><tr><th>#</th><th>班</th><th>名</th><th>分</th></tr></thead><tbody id="rankBodyImpContent"></tbody></table></div>
+                <div class="ranking-col"><h3 style="color:#d62728; text-align:center;">📉 相對退步</h3><table class="risk-table rank-table"><thead><tr><th>#</th><th>班</th><th>名</th><th>分</th></tr></thead><tbody id="rankBodyRegContent"></tbody></table></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="detail-section" style="display:none;">
+        <h2>🔍 第四部分：學生成績詳細分析</h2>
+        <div class="detail-control">
+            <div><label>班別：</label><select id="classSelect" onchange="drawDetailChart()"><option value="">--</option></select></div>
+            <div>
+                <label>模式：</label>
+                <select id="viewMode" onchange="updateDetailControls()">
+                    <option value="all">三科並列</option>
+                    <option value="chi">中文科</option>
+                    <option value="eng">英文科</option>
+                    <option value="math">數學科</option>
+                </select>
+            </div>
+            <div id="sortControl" style="display:none; margin-left: 15px;">
+                <label>排序方式：</label>
+                <select id="sortMode" onchange="drawDetailChart()">
+                    <option value="classNum">依班號 (*Class Number)</option>
+                    <option value="score">依分數 (高至低)</option>
+                    <option value="diff">依進步幅度 (最進步至最退步)</option>
+                </select>
+            </div>
+            <div style="margin-left:auto;"><button class="download-btn" onclick="downloadChart('chart-main', '詳細分析')">📸 下載</button></div>
+        </div>
+        <div class="chart-wrapper"><div id="chart-main"></div></div>
+    </div>
+
+    <div id="ai-section" style="display:none; margin-top:40px;">
+        <h2>🤖 第五部分：AI 智能教學顧問 (Beta)</h2>
+        <div class="ai-container">
+            <div id="chatWindow" class="ai-chat-window"><div class="chat-bubble chat-ai">👋 分析完成！</div></div>
+            <div class="ai-input-area"><button class="copy-prompt-btn" onclick="copyAiPrompt()">📋 複製數據分析指令</button></div>
+        </div>
+    </div>
+
+    <div class="footer">系統由程式夥伴協助建立</div>
+</div>
+
+<script>
+    var rawInfo = [], rawOld = [], rawNew = [];
+    var processedData = {};
+    var classStats = {}; 
+    var globalMeans = {}; 
+    var globalSDs = {};
+    var processedDataExport = null;
+    var currentGrade = '1';
+
+    // 嘗試呼叫雲端儲存
+    window.trySaveCloud = function() {
+        if(window.saveToCloud_Impl) {
+            window.saveToCloud_Impl();
+        } else {
+            alert("❌ 雲端模組尚未載入！\n(請檢查是否有填入 Config，或網絡是否正常)");
+        }
+    };
+
+    window.addEventListener('DOMContentLoaded', () => { 
+        if(window.loadFromCloud_Impl) window.loadFromCloud_Impl('1');
+    });
+
+    window.switchGradeUI = function(grade) {
+        currentGrade = grade;
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.nav-btn')[grade-1].classList.add('active');
+        document.getElementById('currentGradeBadge').innerText = `P${grade}`;
+        document.getElementById('btnSaveCloud').innerText = `☁️ 儲存 P${grade} 至雲端`;
+        
+        if (window.loadFromCloud_Impl) window.loadFromCloud_Impl(grade);
+        else window.resetToUploadMode();
+    };
+
+    window.editSettings = function() {
+        document.getElementById('mainControlPanel').style.display = 'grid';
+        document.getElementById('reportHeader').style.display = 'none';
+        document.getElementById('cloudActions').style.display = 'none';
+        ['stats-banner', 'macro-section', 'risk-section', 'ranking-section', 'detail-section', 'ai-section'].forEach(id => {
+            document.getElementById(id).style.display = 'none';
+        });
+        ['stuSettings', 'oldScoreSettings', 'newScoreSettings'].forEach(id => { document.getElementById(id).style.display = 'block'; });
+        document.getElementById('mainControlPanel').scrollIntoView({ behavior: 'smooth' });
+    };
+
+    window.resetToUploadMode = function() {
+        window.editSettings(); 
+        window.resetData();
+    };
+
+    window.resetData = function() {
+        rawInfo = []; rawOld = []; rawNew = [];
+        ['stuSettings', 'oldScoreSettings', 'newScoreSettings'].forEach(id => { document.getElementById(id).style.display = 'none'; });
+        ['msg-info', 'msg-old', 'msg-new'].forEach(id => { document.getElementById(id).innerText = ''; });
+    };
+
+    window.handleFileSelect = function(input, type) {
+        if (input.files && input.files[0]) {
+            parseCSV(input.files[0], type);
+        }
+    };
+
+    function parseCSV(file, type) {
+        const enc = document.getElementById('encodingSelect').value;
+        const status = document.getElementById('statusMsg');
+        status.innerText = "讀取中...";
+
+        Papa.parse(file, {
+            header: false, skipEmptyLines: true, encoding: enc,
+            complete: (res) => {
+                if(!res.data || res.data.length < 1) { 
+                    status.innerText = "錯誤：檔案為空"; 
+                    return; 
+                }
+                document.getElementById('msg-' + type).innerText = `✅ 已讀取 ${res.data.length} 行`;
+                status.innerText = "";
+                
+                const h = res.data[0];
+                if(type === 'info') { 
+                    rawInfo = res.data; 
+                    initDropdown('stuSettings', h, [
+                        {id:'colClass',keys:['班','class']},
+                        {id:'colName',keys:['姓名','name']},
+                        {id:'colRegInfo',keys:['註冊','reg']}
+                    ]); 
+                }
+                if(type === 'old') { 
+                    rawOld = res.data; 
+                    initDropdown('oldScoreSettings', h, [
+                        {id:'colOldReg',keys:['註冊','reg']},
+                        {id:'colOldChi',keys:['中文','chi']},
+                        {id:'colOldEng',keys:['英文','eng']},
+                        {id:'colOldMath',keys:['數學','math']}
+                    ]); 
+                }
+                if(type === 'new') { 
+                    rawNew = res.data; 
+                    initDropdown('newScoreSettings', h, [
+                        {id:'colNewReg',keys:['註冊','reg']},
+                        {id:'colNewClassNum',keys:['班號','class no','no.','number']}, // 支援自動偵測
+                        {id:'colNewChi',keys:['中文','chi']},
+                        {id:'colNewEng',keys:['英文','eng']},
+                        {id:'colNewMath',keys:['數學','math']}
+                    ]); 
+                }
+            },
+            error: (err) => { status.innerText = "讀取失敗: " + err.message; }
+        });
+    }
+
+    function initDropdown(panelId, headers, configs) {
+        document.getElementById(panelId).style.display = 'block'; 
+        configs.forEach(cfg => {
+            const sel = document.getElementById(cfg.id);
+            if(!sel) return;
+            sel.innerHTML = '';
+            
+            let foundIdx = -1;
+            headers.forEach((h, i) => {
+                const opt = new Option(`[${i}] ${h}`, i);
+                sel.add(opt);
+                if(foundIdx === -1 && cfg.keys.some(k => String(h).toLowerCase().includes(k))) {
+                    foundIdx = i;
+                }
+            });
+
+            if(foundIdx !== -1) {
+                sel.value = foundIdx;
+                const label = sel.previousElementSibling;
+                if(label && !label.innerHTML.includes('自動')) {
+                    label.innerHTML += ' <span class="auto-tag">✔ 自動偵測</span>';
+                }
+            }
+        });
+    }
+
+    window.processData = function() {
+        const status = document.getElementById('statusMsg');
+        if (!rawInfo.length || !rawOld.length || !rawNew.length) { 
+            status.innerText = "錯誤：請確保三個檔案都已上傳。"; 
+            alert("請先上傳所有檔案");
+            return; 
+        }
+
+        const getVal = (id) => parseInt(document.getElementById(id).value);
+        
+        const idxClass = getVal('colClass');
+        const idxName = getVal('colName');
+        const idxRegInfo = getVal('colRegInfo');
+        const idxOldReg = getVal('colOldReg'), idxOldChi = getVal('colOldChi'), idxOldEng = getVal('colOldEng'), idxOldMath = getVal('colOldMath');
+        const idxNewReg = getVal('colNewReg'), idxNewChi = getVal('colNewChi'), idxNewEng = getVal('colNewEng'), idxNewMath = getVal('colNewMath');
+        const idxNewClassNum = getVal('colNewClassNum');
+
+        const validRegNos = new Set();
+        rawInfo.slice(1).forEach(r => { 
+            const reg = r[idxRegInfo] ? String(r[idxRegInfo]).trim() : ""; 
+            if(reg) validRegNos.add(reg); 
+        });
+
+        if(validRegNos.size === 0) { status.innerText = "警告：找不到有效的註冊編號。"; return; }
+
+        function parseScore(val) {
+            if (!val) return NaN;
+            const clean = String(val).trim();
+            if (clean === '' || ['abs', 'absent', 'ops', '--'].includes(clean.toLowerCase())) return NaN;
+            return parseFloat(clean);
+        }
+
+        function getScoresWithClassNum(data, idxReg, idxChi, idxEng, idxMath, idxClassNum) {
+            const map = {};
+            data.slice(1).forEach(r => {
+                const reg = r[idxReg] ? String(r[idxReg]).trim() : null;
+                if(reg) {
+                    const cNum = r[idxClassNum] ? parseInt(String(r[idxClassNum]).replace(/\D/g,'')) : 0;
+                    map[reg] = { 
+                        chi: parseScore(r[idxChi]), 
+                        eng: parseScore(r[idxEng]), 
+                        math: parseScore(r[idxMath]),
+                        classNum: cNum 
+                    };
+                }
+            });
+            return map;
+        }
+
+        function getScores(data, idxReg, idxChi, idxEng, idxMath) {
+            const map = {};
+            data.slice(1).forEach(r => {
+                const reg = r[idxReg] ? String(r[idxReg]).trim() : null;
+                if(reg) map[reg] = { chi: parseScore(r[idxChi]), eng: parseScore(r[idxEng]), math: parseScore(r[idxMath]) };
+            });
+            return map;
+        }
+
+        const mapOld = getScores(rawOld, idxOldReg, idxOldChi, idxOldEng, idxOldMath);
+        const mapNew = getScoresWithClassNum(rawNew, idxNewReg, idxNewChi, idxNewEng, idxNewMath, idxNewClassNum);
+
+        let sums = {chi:{o:0,n:0,c:0,arr:[]}, eng:{o:0,n:0,c:0,arr:[]}, math:{o:0,n:0,c:0,arr:[]}};
+
+        [mapOld, mapNew].forEach((map, isNew) => {
+            Object.keys(map).forEach(reg => {
+                if (validRegNos.has(reg)) {
+                    ['chi','eng','math'].forEach(sub => {
+                        const val = map[reg][sub];
+                        if(!isNaN(val)) {
+                            if(isNew) { sums[sub].n += val; sums[sub].c++; sums[sub].arr.push(val); }
+                            else { sums[sub].o += val; }
+                        }
+                    });
+                }
+            });
+        });
+
+        globalMeans = {}; globalSDs = {};
+        ['chi','eng','math'].forEach(sub => {
+            globalMeans[sub] = {
+                old: sums[sub].c ? (sums[sub].o / sums[sub].c) : 0,
+                new: sums[sub].c ? (sums[sub].n / sums[sub].c) : 0
+            };
+            globalSDs[sub] = sums[sub].arr.length > 1 ? ss.standardDeviation(sums[sub].arr) : 15;
+        });
+
+        processedData = {};
+        const classesFound = new Set();
+
+        rawInfo.slice(1).forEach(r => {
+            const reg = r[idxRegInfo] ? String(r[idxRegInfo]).trim() : null;
+            if(reg && validRegNos.has(reg)) {
+                const cls = r[idxClass] ? r[idxClass].trim() : "Unknown";
+                const name = r[idxName] ? r[idxName].trim() : "Unknown";
+                const o = mapOld[reg] || { chi: NaN, eng: NaN, math: NaN };
+                const n = mapNew[reg] || { chi: NaN, eng: NaN, math: NaN, classNum: 0 };
+                
+                if(['chi','eng','math'].some(sub => !isNaN(o[sub]) || !isNaN(n[sub]))) {
+                    const student = { name: name, cls: cls, classNum: n.classNum || 0 };
+                    ['chi','eng','math'].forEach(sub => {
+                        const oldScore = o[sub];
+                        const newScore = n[sub];
+                        let relativeDiff = NaN;
+                        if(!isNaN(oldScore) && !isNaN(newScore)) {
+                            relativeDiff = (newScore - globalMeans[sub].new) - (oldScore - globalMeans[sub].old);
+                        }
+                        student[sub] = { old: oldScore, new: newScore, diff: relativeDiff };
+                    });
+                    if(!processedData[cls]) processedData[cls] = [];
+                    processedData[cls].push(student);
+                    classesFound.add(cls);
+                }
+            }
+        });
+
+        classStats = {};
+        const sortedClasses = Array.from(classesFound).sort();
+        sortedClasses.forEach(cls => {
+            classStats[cls] = {};
+            ['chi','eng','math'].forEach(sub => {
+                let imp = 0, reg = 0, sumOld = 0, cntOld = 0, sumNew = 0, cntNew = 0;
+                let scoresNew = [];
+                processedData[cls].forEach(s => {
+                    if(!isNaN(s[sub].old)) { sumOld += s[sub].old; cntOld++; }
+                    if(!isNaN(s[sub].new)) { sumNew += s[sub].new; cntNew++; scoresNew.push(s[sub].new); }
+                    if(!isNaN(s[sub].diff)) { if(s[sub].diff >= 0) imp++; else reg++; }
+                });
+                let median = 0;
+                scoresNew.sort((a,b)=>a-b);
+                if(scoresNew.length > 0) { 
+                    const mid = Math.floor(scoresNew.length/2); 
+                    median = scoresNew.length % 2 !== 0 ? scoresNew[mid] : (scoresNew[mid-1] + scoresNew[mid])/2; 
+                }
+                let meanNew = cntNew ? sumNew/cntNew : 0;
+                let sd = scoresNew.length > 1 ? ss.standardDeviation(scoresNew) : 0;
+                classStats[cls][sub] = { improved: imp, regressed: reg, avgOld: cntOld ? sumOld/cntOld : 0, avgNew: meanNew, median: median, sd: sd, count: cntNew };
+            });
+        });
+
+        processedDataExport = { processedData, classStats, globalMeans, globalSDs };
+
+        window.restoreDashboardUI();
+        document.getElementById('cloudStatus').innerText = `⚠️ P${currentGrade} 數據尚未儲存`;
+    };
+
+    window.restoreDashboardUI = function() {
+        const sortedClasses = Object.keys(processedData).sort();
+        const select = document.getElementById('classSelect');
+        select.innerHTML = '<option value="">-- 請選擇班別 --</option>';
+        sortedClasses.forEach(c => select.add(new Option(c, c)));
+
+        document.getElementById('mainControlPanel').style.display = 'none';
+        document.getElementById('cloudActions').style.display = 'flex';
+        document.getElementById('reportHeader').style.display = 'block';
+        
+        ['stats-banner', 'macro-section', 'risk-section', 'ranking-section', 'detail-section', 'ai-section'].forEach(id => {
+            document.getElementById(id).style.display = 'block';
+        });
+        window.renderAllCharts();
+    };
+
+    window.renderAllCharts = function() {
+        updateMacroCharts();
+        const riskList = [];
+        Object.values(processedData).flat().forEach(s => {
+            let drop=0, valid=0;
+            ['chi','eng','math'].forEach(sub => { if(!isNaN(s[sub].diff)) { valid++; if(s[sub].diff < -0.5) drop++; } });
+            if(valid >= 2 && drop === valid) riskList.push(s);
+        });
+        updateRiskTable(riskList);
+        updateRankings();
+        drawDetailChart();
+        generateAIReport(classStats, globalMeans);
+    };
+
+    // --- Visualization ---
+    window.updateDetailControls = function() {
+        const viewMode = document.getElementById('viewMode').value;
+        const sortControl = document.getElementById('sortControl');
+        sortControl.style.display = (viewMode !== 'all') ? 'inline-block' : 'none';
+        window.drawDetailChart();
+    };
+
+    window.drawDetailChart = function() {
+        const cls = document.getElementById('classSelect').value;
+        const viewMode = document.getElementById('viewMode').value; 
+        const sortMode = document.getElementById('sortMode').value;
+
+        if(!cls || !processedData[cls]) return;
+        
+        // 修正排序邏輯
+        let students = [...processedData[cls]];
+
+        if (viewMode === 'all') {
+            // 三科並列：依班號 1 -> N (Y軸 下 -> 上)
+            // Plotly Y-axis: index 0 (bottom) to N (top).
+            // 我們希望 1 在最上面，所以 Array 應該是 [N, ..., 1]
+            // b - a = Descending -> N ... 1. Correct.
+            students.sort((a, b) => (b.classNum || 0) - (a.classNum || 0));
+        } else {
+            const sub = viewMode; 
+            students.sort((a, b) => {
+                if (sortMode === 'score') {
+                    // 分數 高 -> 低 (Top -> Bottom)
+                    // Array: [Low, ..., High] (Ascending)
+                    return (a[sub].new || 0) - (b[sub].new || 0);
+                } else if (sortMode === 'diff') {
+                    // 進步 高 -> 低
+                    // Array: [Low, ..., High] (Ascending)
+                    return (a[sub].diff || 0) - (b[sub].diff || 0);
+                } else {
+                    // 班號 1 -> N (Top -> Bottom)
+                    // Array: [N, ..., 1] (Descending)
+                    return (b.classNum || 0) - (a.classNum || 0);
+                }
+            });
+        }
+
+        const names = students.map(s => s.name);
+        
+        let targetSubjects = [], gridLayout = {};
+        const allSubjects = [{ key: 'chi', title: '中文科' }, { key: 'eng', title: '英文科' }, { key: 'math', title: '數學科' }];
+
+        if (viewMode === 'all') {
+            targetSubjects = [
+                { ...allSubjects[0], domain: [0, 0.32], axis: 'x' },
+                { ...allSubjects[1], domain: [0.34, 0.66], axis: 'x2' },
+                { ...allSubjects[2], domain: [0.68, 1], axis: 'x3' }
+            ];
+            gridLayout = { rows: 1, columns: 3, pattern: 'independent' };
+        } else {
+            const sub = allSubjects.find(s => s.key === viewMode);
+            targetSubjects = [{ ...sub, domain: [0, 1], axis: 'x' }];
+            gridLayout = { rows: 1, columns: 1, pattern: 'independent' };
+        }
+
+        const traces = [], annotations = [], shapes = [];
+        targetSubjects.forEach((sub) => {
+            const axisX = sub.axis;
+            const gOld = globalMeans[sub.key].old;
+            const gNew = globalMeans[sub.key].new;
+
+            shapes.push({ type: 'line', x0: gOld, x1: gOld, y0: 0, y1: 1, xref: axisX, yref: 'paper', line: { color: '#999', width: 1, dash: 'dot' } });
+            shapes.push({ type: 'line', x0: gNew, x1: gNew, y0: 0, y1: 1, xref: axisX, yref: 'paper', line: { color: '#333', width: 1, dash: 'dash' } });
+
+            const colors = students.map(s => isNaN(s[sub.key].diff) ? 'grey' : (s[sub.key].diff >= 0 ? '#2ca02c' : '#d62728'));
+
+            traces.push({ x: students.map(s => s[sub.key].old), y: names, xaxis: axisX, yaxis: 'y', mode: 'markers', marker: { color: '#ccc', size: viewMode==='all'?8:12 }, hoverinfo: 'x+y', name: '舊', showlegend: false });
+            traces.push({ x: students.map(s => s[sub.key].new), y: names, xaxis: axisX, yaxis: 'y', mode: 'markers', marker: { color: colors, size: viewMode==='all'?10:15, line:{width:1,color:'white'} }, hoverinfo: 'x+y', name: '新', showlegend: false });
+
+            students.forEach(s => {
+                if(isNaN(s[sub.key].old) || isNaN(s[sub.key].new)) return;
+                const c = s[sub.key].diff >= 0 ? '#2ca02c' : '#d62728';
+                annotations.push({ x: s[sub.key].new, y: s.name, ax: s[sub.key].old, ay: s.name, xref: axisX, yref: 'y', axref: axisX, ayref: 'y', showarrow: true, arrowhead: 2, arrowsize: 1, arrowwidth: viewMode==='all'?1.5:2, arrowcolor: c });
+                annotations.push({ x: Math.max(s[sub.key].old, s[sub.key].new)+2, y: s.name, xref: axisX, yref: 'y', text: `${s[sub.key].new}`, showarrow: false, font: { color: c, size: viewMode==='all'?11:14 }, xanchor: 'left' });
+            });
+            annotations.push({ x: gNew, y: 1.02, xref: axisX, yref: 'paper', text: `Avg:${gNew.toFixed(0)}`, showarrow: false, font: {size: 12, color: '#333'}, xanchor: 'center' });
+        });
+
+        const layout = {
+            title: `班別 ${cls} 詳細分析`, height: Math.max(600, students.length * 35), 
+            margin: { l: 150, r: 50, t: 80, b: 50 }, grid: gridLayout, shapes: shapes,
+            yaxis: { automargin: true, title: '', dtick: 1 }, annotations: annotations, showlegend: false, hovermode: 'closest'
+        };
+
+        if(viewMode === 'all') {
+            layout.xaxis = { domain: targetSubjects[0].domain, title: '中文', range: [0, 115] };
+            layout.xaxis2 = { domain: targetSubjects[1].domain, title: '英文', range: [0, 115] };
+            layout.xaxis3 = { domain: targetSubjects[2].domain, title: '數學', range: [0, 115] };
+        } else {
+            layout.xaxis = { domain: targetSubjects[0].domain, title: targetSubjects[0].title, range: [0, 115] };
+        }
+        Plotly.newPlot('chart-main', traces, layout);
+    };
+
+    function normalPDF(x, mu, sigma) { return (1 / (sigma * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mu) / sigma, 2)); }
+    function getSubjectName(code) { return code==='chi'?'中文':(code==='eng'?'英文':'數學'); }
+    window.downloadChart = function(divId, filename) { Plotly.downloadImage(divId, {format: 'png', width: 1200, height: 800, filename: filename}); };
+    window.downloadDiv = function(divId, filename) { html2canvas(document.getElementById(divId)).then(canvas => { const link = document.createElement('a'); link.download = filename + '.png'; link.href = canvas.toDataURL(); link.click(); }); };
+
+    window.updateMacroCharts = function() {
+        const subject = document.getElementById('macroSubjectSelect').value;
+        const classes = Object.keys(classStats).sort();
+        const gOld = globalMeans[subject].old, gNew = globalMeans[subject].new, gSD = globalSDs[subject];
+        document.getElementById('macro-score-diff').innerHTML = `平均分: ${gOld.toFixed(1)} ⮕ ${gNew.toFixed(1)}`;
+        
+        Plotly.newPlot('chart-bar-stats', [
+            { x: classes, y: classes.map(c => classStats[c][subject].improved), name: '相對進步', type: 'bar', marker: { color: '#2ca02c' } },
+            { x: classes, y: classes.map(c => classStats[c][subject].regressed), name: '相對退步', type: 'bar', marker: { color: '#d62728' } }
+        ], { title: `各班[${getSubjectName(subject)}]表現`, barmode: 'group' });
+
+        const lineTraces = classes.map(c => ({
+            x: ['舊平均', '新平均'], y: [classStats[c][subject].avgOld, classStats[c][subject].avgNew],
+            mode: 'lines+markers', name: c
+        }));
+        lineTraces.push({ x: ['舊平均', '新平均'], y: [gOld, gNew], mode: 'lines', name: '全級平均', line: { width: 4, color: 'black', dash: 'dot' } });
+        Plotly.newPlot('chart-line-avg', lineTraces, { title: `各班平均分趨勢` });
+
+        const tracesDist = [];
+        const binSize = 4;
+        let totalStudents = 0;
+        classes.forEach(cls => {
+            const scores = [];
+            if(processedData[cls]) processedData[cls].forEach(s => { const sc = s[subject].new; if(!isNaN(sc)) { scores.push(sc); totalStudents++; } });
+            tracesDist.push({ x: scores, type: 'histogram', name: cls, xbins: { start: 0, end: 100, size: binSize }, opacity: 0.7 });
+        });
+        const xValues = [], yValues = [];
+        for (let x = 0; x <= 100; x += 1) { xValues.push(x); yValues.push(normalPDF(x, gNew, gSD) * totalStudents * binSize); }
+        tracesDist.push({ x: xValues, y: yValues, mode: 'lines', name: '理想常態分佈', line: { color: 'black', width: 3, dash: 'dash' } });
+        Plotly.newPlot('chart-dist', tracesDist, { title: `全級${getSubjectName(subject)}分佈 (Bins=4)`, barmode: 'stack', xaxis: { range: [0, 105] } });
+    };
+
+    window.updateRankings = function() {
+        const subject = document.getElementById('rankSubjectSelect').value;
+        let allStudents = [];
+        Object.values(processedData).forEach(clsList => { clsList.forEach(s => { if (!isNaN(s[subject].diff)) allStudents.push(s); }); });
+        const sortedImp = [...allStudents].sort((a, b) => b[subject].diff - a[subject].diff).slice(0, 20);
+        const sortedReg = [...allStudents].sort((a, b) => a[subject].diff - b[subject].diff).slice(0, 20);
+        renderRankTable('rankBodyImpContent', sortedImp, subject, 'imp');
+        renderRankTable('rankBodyRegContent', sortedReg, subject, 'reg');
+    };
+
+    function renderRankTable(tbodyId, list, subject, type) {
+        const tbody = document.getElementById(tbodyId);
+        tbody.innerHTML = '';
+        list.forEach((s, idx) => {
+            const val = s[subject].diff;
+            const valStr = val > 0 ? `+${val.toFixed(1)}` : val.toFixed(1);
+            const classColor = type === 'imp' ? 'val-imp' : 'val-reg';
+            tbody.innerHTML += `<tr><td>${idx+1}</td><td>${s.cls}</td><td>${s.name}</td><td class="${classColor}">${valStr}</td></tr>`;
+        });
+    }
+
+    function updateRiskTable(list) {
+        const tbody = document.querySelector('#riskTable tbody');
+        tbody.innerHTML = '';
+        if(list.length === 0) { document.getElementById('risk-section').style.display = 'none'; return; }
+        document.getElementById('risk-section').style.display = 'block';
+        list.sort((a,b) => a.cls.localeCompare(b.cls));
+        list.forEach(s => {
+            const fmt = (val) => isNaN(val) ? '-' : (val > 0 ? '+'+val.toFixed(1) : val.toFixed(1));
+            tbody.innerHTML += `<tr><td><b>${s.cls}</b></td><td>${s.name}</td><td class="risk-val">${fmt(s.chi.diff)}</td><td class="risk-val">${fmt(s.eng.diff)}</td><td class="risk-val">${fmt(s.math.diff)}</td></tr>`;
+        });
+    }
+
+    function generateAIReport(stats, gMeans) {
+        let promptText = `全級平均 - 中:${gMeans.chi.new.toFixed(1)}, 英:${gMeans.eng.new.toFixed(1)}, 數:${gMeans.math.new.toFixed(1)}\n`;
+        Object.keys(stats).sort().forEach(cls => {
+            promptText += `【${cls}】中${stats[cls].chi.avgNew.toFixed(1)} 英${stats[cls].eng.avgNew.toFixed(1)} 數${stats[cls].math.avgNew.toFixed(1)}\n`;
+        });
+        document.getElementById('aiPrompt').value = promptText;
+    }
+    window.copyAiPrompt = function() { navigator.clipboard.writeText(document.getElementById('aiPrompt').value).then(() => alert("已複製")); };
+</script>
+
+</body>
+</html>
