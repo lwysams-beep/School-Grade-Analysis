@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全級學術成績分析系統 V17 Pro</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-statistics/7.7.0/simple-statistics.min.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBYtaDjYgO0F2qlvWgmeMavE0SUBTzFONU",
+  authDomain: "school-grade-analysis-ed4e1.firebaseapp.com",
+  projectId: "school-grade-analysis-ed4e1",
+  storageBucket: "school-grade-analysis-ed4e1.firebasestorage.app",
+  messagingSenderId: "119965796660",
+  appId: "1:119965796660:web:55e160b8eab960ab157d61",
+  measurementId: "G-S36T3HV2PT"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+        const db = getFirestore(app);
+
+        // 儲存邏輯 (處理 NaN)
+        window.saveToCloud = async function() {
+            const grade = window.currentGrade;
+            if(!window.processedDataExport) { alert("沒有數據可儲存！"); return; }
+            const btn = document.getElementById('btnSaveCloud');
+            btn.innerText = "☁️ 儲存中...";
+            try {
+                const jsonString = JSON.stringify(window.processedDataExport, (key, val) => 
+                    (typeof val === 'number' && isNaN(val)) ? "###NaN###" : val
+                );
+                await setDoc(doc(db, "grades", grade), { data: JSON.parse(jsonString), updatedAt: new Date().toLocaleString() });
+                alert(`✅ P${grade} 數據已上傳！`);
+            } catch (e) { alert("儲存失敗：" + e.message); }
+            btn.innerText = "☁️ 上傳至雲端";
+        }
+
+        // 讀取邏輯
+        window.loadFromCloud = async function(grade) {
+            window.switchGradeUI(grade);
+            const statusDiv = document.getElementById('cloudStatus');
+            statusDiv.innerHTML = `⏳ 讀取 P${grade} 中...`;
+            try {
+                const snap = await getDoc(doc(db, "grades", grade));
+                if (snap.exists()) {
+                    const cleanData = JSON.parse(JSON.stringify(snap.data().data), (k, v) => v === "###NaN###" ? NaN : v);
+                    window.processed = cleanData.processed;
+                    window.globalStats = cleanData.globalStats;
+                    
+                    document.getElementById('uploadPanel').style.display = 'none';
+                    document.getElementById('resultArea').style.display = 'block';
+                    document.getElementById('btnBackUpload').style.display = 'inline-block';
+                    statusDiv.innerHTML = `✅ 已載入 P${grade} (更新於: ${snap.data().updatedAt})`;
+                    window.renderDashboard();
+                } else {
+                    statusDiv.innerHTML = `ℹ️ P${grade} 無雲端數據，請上傳。`;
+                    window.resetToUploadMode();
+                }
+            } catch (e) { statusDiv.innerHTML = `❌ 錯誤: ${e.message}`; }
+        }
+    </script>
+
+    <style>
+        body { font-family: "Microsoft JhengHei", sans-serif; background-color: #f0f2f5; padding: 20px; margin: 0; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.08); }
+        
+        /* 導航與標題 */
+        .nav-bar { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .nav-btn { flex: 1; padding: 12px; border: none; background: #e0e0e0; cursor: pointer; font-size: 1.1em; font-weight: bold; border-radius: 8px 8px 0 0; color: #555; transition: 0.2s; }
+        .nav-btn.active { background: #007bff; color: white; transform: translateY(-3px); }
+        .nav-btn:hover:not(.active) { background: #d0d0d0; }
+
+        h1 { text-align: center; color: #2c3e50; margin: 10px 0; }
+        .grade-badge { background: #007bff; color: white; padding: 4px 12px; border-radius: 15px; font-size: 0.7em; vertical-align: middle; }
+        
+        /* 控制面板 */
+        .control-panel { background: #e9ecef; padding: 20px; border-radius: 8px; margin-bottom: 20px; display: grid; gap: 15px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+        .cloud-status-bar { grid-column: 1/-1; background: #fff3e0; color: #e65100; padding: 8px; text-align: center; border-radius: 5px; font-weight: bold; font-size: 0.9em; margin-bottom:10px; }
+        
+        /* 映射與輸入 */
+        .mapping-box { grid-column: 1/-1; background: white; padding: 15px; border: 1px solid #ced4da; border-radius: 5px; display: none; }
+        .mapping-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+        label { font-weight: bold; font-size: 0.9em; display: block; margin-bottom: 4px; }
+        select, input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+
+        /* 按鈕群 */
+        .primary-btn { grid-column: 1/-1; background: #28a745; color: white; padding: 12px; border: none; border-radius: 5px; font-size: 1.1em; cursor: pointer; width: 100%; transition: 0.3s; }
+        .primary-btn:hover { background: #218838; }
+        .cloud-btn { background: #17a2b8; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; }
+        .reset-btn { background: #6c757d; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
+        
+        /* 下載按鈕 */
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .dl-btn { background: #6f42c1; color: white; border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+        .dl-btn:hover { background: #5a32a3; }
+
+        /* 區塊樣式 */
+        .section-box { border: 1px solid #e0e0e0; padding: 20px; border-radius: 10px; background: #fff; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center; margin-bottom: 20px; }
+        .stat-item { background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 5px solid #007bff; }
+        .stat-val { font-size: 1.8em; color: #2c3e50; font-weight: bold; margin-top: 5px; }
+
+        /* 龍虎榜表格 */
+        .lists-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .list-box { border: 1px solid #eee; border-radius: 8px; padding: 10px; }
+        .top-list th { background: #d4edda; color: #155724; }
+        .bottom-list th { background: #f8d7da; color: #721c24; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+        th, td { padding: 8px; text-align: center; border-bottom: 1px solid #eee; }
+        
+        /* 詳細分析控制 */
+        .detail-controls { background: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 15px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+        .radio-group { display: flex; gap: 10px; align-items: center; }
+
+        .ai-box { background: #e3f2fd; padding: 15px; border-radius: 8px; margin-top: 20px; border: 1px solid #bbdefb; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1 id="mainTitle">全級學術成績分析系統 <span id="currentGradeBadge" class="grade-badge">P1</span></h1>
+    
+    <div class="nav-bar">
+        <button class="nav-btn active" onclick="window.loadFromCloud('1')">P1</button>
+        <button class="nav-btn" onclick="window.loadFromCloud('2')">P2</button>
+        <button class="nav-btn" onclick="window.loadFromCloud('3')">P3</button>
+        <button class="nav-btn" onclick="window.loadFromCloud('4')">P4</button>
+        <button class="nav-btn" onclick="window.loadFromCloud('5')">P5</button>
+        <button class="nav-btn" onclick="window.loadFromCloud('6')">P6</button>
+    </div>
+
+    <div id="cloudStatus" class="cloud-status-bar">準備就緒</div>
+
+    <div class="control-panel" id="uploadPanel">
+        <div style="grid-column: 1/-1;">
+            <label style="display:inline;">🔧 檔案編碼：</label>
+            <select id="encodingSelect" style="width:auto; display:inline-block;">
+                <option value="Big5" selected>Big5 (Excel 預設)</option>
+                <option value="UTF-8">UTF-8 (通用)</option>
+            </select>
+        </div>
+        <div><label>1. 學生資料 (Info)</label><input type="file" id="fileInfo" accept=".csv"></div>
+        <div><label>2. 舊成績 (Old)</label><input type="file" id="fileOld" accept=".csv"></div>
+        <div><label>3. 新成績 (New)</label><input type="file" id="fileNew" accept=".csv"></div>
+        
+        <div id="panelInfo" class="mapping-box">
+            <h3>👤 1. 學生資料對應</h3>
+            <div class="mapping-grid">
+                <div><label>班別</label><select id="colClass"></select></div>
+                <div><label>姓名</label><select id="colName"></select></div>
+                <div><label>註冊編號</label><select id="colRegInfo"></select></div>
+            </div>
+        </div>
+        <div id="panelOld" class="mapping-box">
+            <h3>📂 2. 舊成績對應</h3>
+            <div class="mapping-grid">
+                <div><label>註冊編號</label><select id="oldReg"></select></div>
+                <div><label>中文</label><select id="oldChi"></select></div>
+                <div><label>英文</label><select id="oldEng"></select></div>
+                <div><label>數學</label><select id="oldMath"></select></div>
+            </div>
+        </div>
+        <div id="panelNew" class="mapping-box">
+            <h3>📂 3. 新成績對應</h3>
+            <div class="mapping-grid">
+                <div><label>註冊編號</label><select id="newReg"></select></div>
+                <div><label>中文</label><select id="newChi"></select></div>
+                <div><label>英文</label><select id="newEng"></select></div>
+                <div><label>數學</label><select id="newMath"></select></div>
+            </div>
+        </div>
+        <button class="primary-btn" onclick="processData()">🚀 開始分析</button>
+    </div>
+
+    <div id="resultArea" style="display:none;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
+            <button id="btnBackUpload" class="reset-btn" onclick="resetToUploadMode()">↩️ 重新上傳</button>
+            <button id="btnSaveCloud" class="cloud-btn" onclick="window.saveToCloud()">☁️ 上傳至雲端</button>
+        </div>
+
+        <div class="section-box">
+            <div class="chart-header">
+                <h2>1. 📊 全級宏觀表現與分佈</h2>
+                <button class="dl-btn" onclick="downloadPlot('chart-bell', '全級常態分佈')">📷 下載圖表</button>
+            </div>
+            <div class="stat-grid" id="globalStats"></div>
+            <div id="chart-bell" style="height: 400px;"></div>
+        </div>
+
+        <div class="section-box">
+            <h2>2. 🏆 榮譽與關注名單</h2>
+            <div class="lists-container">
+                <div class="list-box">
+                    <h3 style="color:#28a745; text-align:center; margin-top:0;">🚀 最佳進步 (總分)</h3>
+                    <table class="top-list">
+                        <thead><tr><th>班別</th><th>姓名</th><th>變化</th></tr></thead>
+                        <tbody id="topImproversBody"></tbody>
+                    </table>
+                </div>
+                <div class="list-box">
+                    <h3 style="color:#dc3545; text-align:center; margin-top:0;">⚠️ 急需關注 (總分)</h3>
+                    <table class="bottom-list">
+                        <thead><tr><th>班別</th><th>姓名</th><th>變化</th></tr></thead>
+                        <tbody id="topDroppersBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-box">
+            <div class="chart-header">
+                <h2>3. 📈 各班進步人數統計</h2>
+                <button class="dl-btn" onclick="downloadPlot('chart-macro', '各班進步人數')">📷 下載圖表</button>
+            </div>
+            <div id="chart-macro" style="height: 350px;"></div>
+        </div>
+
+        <div class="section-box">
+            <div class="chart-header">
+                <h2>4. 🔍 班級詳細追蹤 (舊分 vs 新分)</h2>
+                <button class="dl-btn" onclick="downloadPlot('chart-detail', '詳細散點圖')">📷 下載圖表</button>
+            </div>
+            
+            <div class="detail-controls">
+                <div>
+                    <label style="display:inline;">班別：</label>
+                    <select id="classSelect" style="width:auto; padding:5px;" onchange="updateDetailChart()"></select>
+                </div>
+                
+                <div class="radio-group" style="margin-left:20px;">
+                    <label style="margin-right:10px;">檢視排版：</label>
+                    <label><input type="radio" name="layoutMode" value="grid" checked onchange="updateDetailChart()"> 三科並列</label>
+                    <label style="margin-left:10px;"><input type="radio" name="layoutMode" value="single" onchange="updateDetailChart()"> 單科對焦</label>
+                </div>
+
+                <div id="subjectSelectDiv" style="display:none; margin-left:15px;">
+                     <select id="subjectSelect" style="width:auto; padding:5px;" onchange="updateDetailChart()">
+                        <option value="chi">中文科</option>
+                        <option value="eng">英文科</option>
+                        <option value="math">數學科</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="chart-detail" style="height: 500px;"></div>
+            <p style="text-align:center; font-size:0.8em; color:#666;">註：對角線上方(綠點)代表進步，下方(紅點)代表退步。</p>
+        </div>
+
+        <div class="ai-box">
+            <button style="float:right; background:#28a745; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;" onclick="copyPrompt()">複製</button>
+            <h3>🤖 AI 分析指令</h3>
+            <textarea id="aiPrompt" style="width:100%; height:80px; padding:10px; margin-top:5px;" readonly></textarea>
+        </div>
+    </div>
+</div>
+
+<script>
+    let rawData = {};
+    window.processed = {}; 
+    window.globalStats = {};
+    window.currentGrade = '1';
+    window.processedDataExport = null;
+
+    window.addEventListener('DOMContentLoaded', () => { window.loadFromCloud('1'); });
+
+    window.switchGradeUI = function(grade) {
+        window.currentGrade = grade;
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.nav-btn')[grade-1].classList.add('active');
+        document.getElementById('currentGradeBadge').innerText = `P${grade}`;
+        window.resetToUploadMode();
+    }
+
+    window.resetToUploadMode = function() {
+        document.getElementById('uploadPanel').style.display = 'grid';
+        document.getElementById('resultArea').style.display = 'none';
+        document.getElementById('btnBackUpload').style.display = 'none';
+        ['fileInfo', 'fileOld', 'fileNew'].forEach(id => document.getElementById(id).value = '');
+        ['panelInfo', 'panelOld', 'panelNew'].forEach(id => document.getElementById(id).style.display = 'none');
+    }
+
+    // CSV Parsing
+    ['fileInfo', 'fileOld', 'fileNew'].forEach(id => {
+        document.getElementById(id).addEventListener('change', e => parseCSV(e, id));
+    });
+
+    function parseCSV(e, type) {
+        const enc = document.getElementById('encodingSelect').value;
+        Papa.parse(e.target.files[0], {
+            header: false, skipEmptyLines: true, encoding: enc,
+            complete: res => {
+                rawData[type] = res.data;
+                const h = res.data[0];
+                if(type === 'fileInfo') initDropdown('panelInfo', h, [{id:'colClass',keys:['班','class']},{id:'colName',keys:['姓名','name']},{id:'colRegInfo',keys:['註冊','reg']}]);
+                if(type === 'fileOld') initDropdown('panelOld', h, [{id:'oldReg',keys:['註冊','reg']},{id:'oldChi',keys:['中文','chi']},{id:'oldEng',keys:['英文','eng']},{id:'oldMath',keys:['數學','math']}]);
+                if(type === 'fileNew') initDropdown('panelNew', h, [{id:'newReg',keys:['註冊','reg']},{id:'newChi',keys:['中文','chi']},{id:'newEng',keys:['英文','eng']},{id:'newMath',keys:['數學','math']}]);
+            }, error: err => alert("讀取錯誤: " + err.message)
+        });
+    }
+
+    function initDropdown(pid, headers, cfgs) {
+        document.getElementById(pid).style.display = 'block';
+        cfgs.forEach(c => {
+            const sel = document.getElementById(c.id); sel.innerHTML = '';
+            let f = -1;
+            headers.forEach((h, i) => {
+                const opt = new Option(`[${i}] ${h}`, i); sel.add(opt);
+                if(f===-1 && c.keys.some(k=>h.toLowerCase().includes(k))) f=i;
+            });
+            if(f!==-1) sel.value = f;
+        });
+    }
+
+    window.processData = function() {
+        if(!rawData.fileInfo || !rawData.fileOld || !rawData.fileNew) { alert("請上傳所有檔案"); return; }
+        
+        const getVal = (id) => document.getElementById(id).value;
+        const getScores = (rows, prefix) => {
+            const iReg = getVal(prefix+'Reg'), iChi = getVal(prefix+'Chi'), iEng = getVal(prefix+'Eng'), iMath = getVal(prefix+'Math');
+            let map = {};
+            rows.slice(1).forEach(r => {
+                const reg = r[iReg]?.trim();
+                if(reg) map[reg] = { chi: parseFloat(r[iChi])||0, eng: parseFloat(r[iEng])||0, math: parseFloat(r[iMath])||0 };
+            });
+            return map;
+        };
+
+        const oldMap = getScores(rawData.fileOld, 'old');
+        const newMap = getScores(rawData.fileNew, 'new');
+        
+        window.processed = {};
+        let allScores = { chi:[], eng:[], math:[] };
+        
+        // Data Merging
+        const iCls = getVal('colClass'), iName = getVal('colName'), iRegInfo = getVal('colRegInfo');
+        rawData.fileInfo.slice(1).forEach(r => {
+            const reg = r[iRegInfo]?.trim();
+            if(!reg || !oldMap[reg] || !newMap[reg]) return;
+            const cls = r[iCls], name = r[iName];
+            if(!window.processed[cls]) window.processed[cls] = [];
+            
+            let sObj = { name, cls, scores: {}, totalDiff: 0 };
+            ['chi','eng','math'].forEach(sub => {
+                const o = oldMap[reg][sub], n = newMap[reg][sub];
+                if(n>0) allScores[sub].push(n);
+                const diff = n - o;
+                sObj.scores[sub] = { old: o, new: n, diff: diff };
+                sObj.totalDiff += diff;
+            });
+            window.processed[cls].push(sObj);
+        });
+
+        // Global Stats & SD
+        window.globalStats = {};
+        ['chi','eng','math'].forEach(sub => {
+            const arr = allScores[sub];
+            window.globalStats[sub] = {
+                avg: arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : 0,
+                std: arr.length > 1 ? ss.standardDeviation(arr) : 15,
+                data: arr
+            };
+        });
+
+        window.processedDataExport = { processed: window.processed, globalStats: window.globalStats };
+        window.renderDashboard();
+        
+        document.getElementById('uploadPanel').style.display = 'none';
+        document.getElementById('resultArea').style.display = 'block';
+        document.getElementById('btnBackUpload').style.display = 'inline-block';
+        document.getElementById('cloudStatus').innerHTML = `⚠️ 數據未儲存 (P${window.currentGrade})`;
+    }
+
+    // ------------------ Rendering Logic ------------------
+
+    window.renderDashboard = function() {
+        renderGlobalStats();
+        renderBellCurve();
+        renderLists();
+        renderMacroChart();
+        updateDetailChart(); // Initial call
+        generatePrompt();
+    }
+
+    function renderGlobalStats() {
+        const div = document.getElementById('globalStats');
+        div.innerHTML = ['chi','eng','math'].map(s => {
+            const n = s==='chi'?'中文':(s==='eng'?'英文':'數學');
+            return `<div class="stat-item"><div>${n}平均分</div><div class="stat-val">${window.globalStats[s].avg.toFixed(1)}</div></div>`;
+        }).join('');
+    }
+
+    function renderBellCurve() {
+        const x = Array.from({length: 101}, (_, i) => i); // 0 to 100
+        const traces = ['chi','eng','math'].map(sub => {
+            const mean = window.globalStats[sub].avg;
+            const std = window.globalStats[sub].std || 15;
+            const y = x.map(val => (1/(std*Math.sqrt(2*Math.PI))) * Math.exp(-0.5 * Math.pow((val-mean)/std, 2)));
+            return { x: x, y: y, name: sub.toUpperCase(), type: 'scatter', mode: 'lines', fill: 'tozeroy', opacity: 0.3 };
+        });
+        Plotly.newPlot('chart-bell', traces, { 
+            title: '全級成績常態分佈 (Bell Curve)', 
+            xaxis: {title: '分數', range: [0, 100]},
+            yaxis: {showticklabels: false, title: '分佈密度'},
+            margin: {t:40, b:40, l:40, r:40}
+        });
+    }
+
+    function renderLists() {
+        const allStudents = Object.values(window.processed).flat();
+        const sorted = allStudents.sort((a,b) => b.totalDiff - a.totalDiff);
+        
+        const top5 = sorted.slice(0, 5);
+        const bottom5 = sorted.slice(-5).reverse();
+
+        const row = (s) => `<tr><td>${s.cls}</td><td>${s.name}</td><td>${s.totalDiff > 0 ? '+' : ''}${s.totalDiff.toFixed(1)}</td></tr>`;
+        document.getElementById('topImproversBody').innerHTML = top5.map(row).join('');
+        document.getElementById('topDroppersBody').innerHTML = bottom5.map(row).join('');
+    }
+
+    function renderMacroChart() {
+        const classes = Object.keys(window.processed).sort();
+        const traces = ['chi','eng','math'].map(sub => ({
+            x: classes,
+            y: classes.map(c => window.processed[c].filter(s => s.scores[sub].diff > 0).length),
+            name: sub.toUpperCase() + ' 進步人數',
+            type: 'bar'
+        }));
+        Plotly.newPlot('chart-macro', traces, { barmode: 'group', margin: {t:30, b:30} });
+    }
+
+    window.updateDetailChart = function() {
+        const selCls = document.getElementById('classSelect');
+        const classes = Object.keys(window.processed).sort();
+        
+        // Populate class selector if empty
+        if(selCls.options.length === 0) {
+            selCls.innerHTML = '';
+            classes.forEach(c => selCls.add(new Option(c, c)));
+        }
+        
+        const cls = selCls.value || classes[0];
+        const students = window.processed[cls];
+        if(!students) return;
+
+        // Layout Check
+        const layoutMode = document.querySelector('input[name="layoutMode"]:checked').value;
+        const subSelectDiv = document.getElementById('subjectSelectDiv');
+        
+        let subjectsToDraw = [];
+        let layout = { 
+            title: `班別 ${cls} 詳細追蹤`, 
+            height: 500, 
+            hovermode: 'closest',
+            margin: {l: 50, r: 20, t: 40, b: 40}
+        };
+
+        if (layoutMode === 'grid') {
+            subSelectDiv.style.display = 'none';
+            subjectsToDraw = ['chi', 'eng', 'math'];
+            layout.grid = { rows: 1, columns: 3, pattern: 'independent' };
+        } else {
+            subSelectDiv.style.display = 'block';
+            subjectsToDraw = [document.getElementById('subjectSelect').value];
+        }
+
+        const traces = [];
+        const nameMap = {'chi':'中文', 'eng':'英文', 'math':'數學'};
+
+        subjectsToDraw.forEach((sub, idx) => {
+            const axis = layoutMode === 'grid' ? (idx + 1) : 1;
+            const axisKey = 'x' + axis;
+            const yaxisKey = 'y' + axis;
+            
+            // Reference Line
+            traces.push({
+                x: [0, 100], y: [0, 100],
+                mode: 'lines',
+                line: {color: 'gray', dash: 'dash', width: 1},
+                xaxis: axisKey, yaxis: yaxisKey,
+                showlegend: false, hoverinfo: 'none'
+            });
+
+            // Student Points
+            const xVals = students.map(s => s.scores[sub].old);
+            const yVals = students.map(s => s.scores[sub].new);
+            const colors = students.map(s => s.scores[sub].diff >= 0 ? '#28a745' : '#dc3545'); // Green/Red
+            const texts = students.map(s => `${s.name}<br>舊: ${s.scores[sub].old}<br>新: ${s.scores[sub].new}<br>差: ${s.scores[sub].diff > 0 ? '+' : ''}${s.scores[sub].diff.toFixed(1)}`);
+
+            traces.push({
+                x: xVals, y: yVals,
+                mode: 'markers',
+                marker: { color: colors, size: 10, opacity: 0.7, line: {color: 'white', width: 1} },
+                text: texts,
+                hoverinfo: 'text',
+                name: nameMap[sub],
+                xaxis: axisKey, yaxis: yaxisKey
+            });
+
+            // Axis Titles
+            layout['xaxis'+axis] = {title: '舊成績', range: [0, 105]};
+            layout['yaxis'+axis] = {title: '新成績', range: [0, 105]};
+        });
+
+        Plotly.newPlot('chart-detail', traces, layout);
+    }
+
+    // Helper to download Plotly Chart
+    window.downloadPlot = function(divId, filename) {
+        Plotly.downloadImage(document.getElementById(divId), {
+            format: 'png', width: 1200, height: 800, filename: filename + '_' + window.currentGrade
+        });
+    }
+
+    window.generatePrompt = function() {
+        let txt = `分析 P${window.currentGrade} 級別表現：\n全級平均：中${window.globalStats.chi.avg.toFixed(1)}, 英${window.globalStats.eng.avg.toFixed(1)}, 數${window.globalStats.math.avg.toFixed(1)}\n`;
+        document.getElementById('aiPrompt').value = txt;
+    }
+    window.copyPrompt = function() { navigator.clipboard.writeText(document.getElementById('aiPrompt').value); alert("已複製"); }
+</script>
+
+</body>
+</html>
