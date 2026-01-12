@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>全級學術成績分析系統 (V29.0 動態分班版)</title>
+    <title>全級學術成績分析系統 (V29.1 修正登入版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
@@ -46,22 +46,19 @@
         
         // 數據變數
         var rawInfo = [], rawOld = [], rawNew = [];
-        var rawInfoHeaders = []; // 儲存學生資料表的標題
-        
-        // 緩存計算用的映射表 (不隨分班改變)
+        var rawInfoHeaders = []; 
         var cachedMapOld = {}, cachedMapNew = {}, cachedGlobalMeans = {}, cachedGlobalSDs = {};
         var cachedValidRegNos = new Set();
-        var cachedColIndices = {}; // 儲存 Name, RegInfo 等固定欄位索引
+        var cachedColIndices = {}; 
 
-        // 最終顯示數據 (隨分班改變)
         var processedData = {};
         var classStats = {}; 
-        var processedDataExport = null; // 用於雲端儲存
+        var processedDataExport = null; 
         var currentGrade = '1';
 
         // 初始化 Firebase
         document.addEventListener('DOMContentLoaded', () => {
-            if (typeof firebase === 'undefined') return; // Offline mode handling if needed
+            if (typeof firebase === 'undefined') return; 
             try {
                 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
                 db = firebase.firestore();
@@ -92,7 +89,7 @@
         };
         window.performLogout = function() { if(auth) auth.signOut().then(() => location.reload()); };
 
-        // --- 雲端功能 (簡化版) ---
+        // --- 雲端功能 ---
         window.saveToCloud_Impl = async function() {
             if (!currentUserIsAdmin || !processedDataExport) return alert("無法儲存");
             try {
@@ -110,16 +107,13 @@
                 const doc = await db.collection("grades").doc(grade).get();
                 if (doc.exists) {
                     const d = JSON.parse(doc.data().data);
-                    // 恢復數據
                     window.processedData = d.processedData;
                     window.classStats = d.classStats;
-                    // 注意：雲端讀取時，通常無法動態切換分班(因為沒有原始csv)，除非我們也存了rawInfo。
-                    // 這裡假設雲端只存「分析結果」。若要動態切換，需重新上傳 CSV。
                     window.globalMeans = d.globalMeans;
                     window.globalSDs = d.globalSDs;
                     window.processedDataExport = d;
                     
-                    document.getElementById('grouping-bar').style.display = 'none'; // 雲端模式下隱藏切換，因為沒有 Raw Data
+                    document.getElementById('grouping-bar').style.display = 'none'; 
                     window.restoreDashboardUI(true);
                     document.getElementById('cloudStatus').innerText = `✅ P${grade} 已載入`;
                 } else {
@@ -149,7 +143,7 @@
                     const h = res.data[0];
                     if(type === 'info') { 
                         rawInfo = res.data; 
-                        rawInfoHeaders = h; // 儲存標題供切換使用
+                        rawInfoHeaders = h; 
                         initDropdown('stuSettings', h, [
                             {id:'colClass', keys:['班','class']},
                             {id:'colName', keys:['姓名','name']},
@@ -177,28 +171,24 @@
             });
         }
 
-        // 階段一：預處理 (不包含分班邏輯)
         window.processData = function() {
             if (!rawInfo.length || !rawOld.length || !rawNew.length) return alert("請上傳所有檔案");
             
             const getVal = (id) => parseInt(document.getElementById(id).value);
             
-            // 1. 儲存欄位設定
             cachedColIndices = {
                 regInfo: getVal('colRegInfo'),
                 name: getVal('colName'),
-                class: getVal('colClass'), // 預設分班
+                class: getVal('colClass'), 
                 newClassNum: getVal('colNewClassNum')
             };
 
-            // 2. 建立 RegNo 清單
             const cleanReg = (v) => v ? String(v).replace(/[\s\uFEFF\xA0]/g, '').toUpperCase() : "";
             cachedValidRegNos = new Set();
             rawInfo.slice(1).forEach(r => { const reg = cleanReg(r[cachedColIndices.regInfo]); if(reg) cachedValidRegNos.add(reg); });
 
             if(cachedValidRegNos.size === 0) return alert("找不到有效的註冊編號");
 
-            // 3. 解析分數
             const parseScore = (v) => {
                 const s = String(v).trim();
                 return (s===''||['abs','--'].includes(s.toLowerCase())) ? NaN : parseFloat(s);
@@ -219,7 +209,6 @@
             cachedMapOld = getScores(rawOld, getVal('colOldReg'), getVal('colOldChi'), getVal('colOldEng'), getVal('colOldMath'));
             cachedMapNew = getScores(rawNew, getVal('colNewReg'), getVal('colNewChi'), getVal('colNewEng'), getVal('colNewMath'), getVal('colNewClassNum'));
 
-            // 4. 計算全級平均 (固定值，不隨分班改變)
             let sums = {chi:{o:0,n:0,c:0,arr:[]}, eng:{o:0,n:0,c:0,arr:[]}, math:{o:0,n:0,c:0,arr:[]}};
             [cachedMapOld, cachedMapNew].forEach((map, isNew) => {
                 Object.keys(map).forEach(reg => {
@@ -240,37 +229,27 @@
                 cachedGlobalMeans[sub] = { old: sums[sub].c ? (sums[sub].o / sums[sub].c) : 0, new: sums[sub].c ? (sums[sub].n / sums[sub].c) : 0 };
                 cachedGlobalSDs[sub] = sums[sub].arr.length > 1 ? ss.standardDeviation(sums[sub].arr) : 15;
             });
-            // 將計算結果同步到全域 (相容舊代碼)
             window.globalMeans = cachedGlobalMeans;
             window.globalSDs = cachedGlobalSDs;
 
-            // 5. 初始化分班切換器
             initGroupingSwitcher(cachedColIndices.class);
-
-            // 6. 執行第一次分班與分析
             applyGrouping(cachedColIndices.class);
         };
 
-        // 新增：初始化分班切換 UI
         function initGroupingSwitcher(defaultIdx) {
             const bar = document.getElementById('grouping-bar');
             const sel = document.getElementById('groupingSelect');
             bar.style.display = 'flex';
             sel.innerHTML = '';
-            
-            rawInfoHeaders.forEach((h, i) => {
-                sel.add(new Option(h, i));
-            });
+            rawInfoHeaders.forEach((h, i) => { sel.add(new Option(h, i)); });
             sel.value = defaultIdx;
         }
 
-        // 新增：切換分班事件
         window.handleGroupingChange = function() {
             const newIdx = parseInt(document.getElementById('groupingSelect').value);
             applyGrouping(newIdx);
         };
 
-        // 階段二：動態分班與統計
         window.applyGrouping = function(classColIdx) {
             processedData = {};
             const cleanReg = (v) => v ? String(v).replace(/[\s\uFEFF\xA0]/g, '').toUpperCase() : "";
@@ -278,7 +257,6 @@
             rawInfo.slice(1).forEach(r => {
                 const reg = cleanReg(r[cachedColIndices.regInfo]);
                 if(reg && cachedValidRegNos.has(reg)) {
-                    // ⚠️ 關鍵：這裡使用動態傳入的 classColIdx
                     const clsVal = r[classColIdx];
                     const cls = clsVal ? clsVal.trim() : "未分班";
                     const name = r[cachedColIndices.name] ? r[cachedColIndices.name].trim() : "Unknown";
@@ -305,7 +283,6 @@
 
             if (Object.keys(processedData).length === 0) { alert("⚠️ 此分班欄位沒有產生有效數據！"); return; }
 
-            // 統計
             classStats = {};
             Object.keys(processedData).sort().forEach(cls => {
                 classStats[cls] = {};
@@ -324,10 +301,7 @@
                 });
             });
 
-            // 準備導出數據
             processedDataExport = { processedData, classStats, globalMeans: cachedGlobalMeans, globalSDs: cachedGlobalSDs };
-            
-            // 更新 UI
             restoreDashboardUI(false);
         };
 
@@ -342,7 +316,6 @@
                  document.getElementById('cloudActions').style.display = currentUserIsAdmin ? 'flex' : 'none';
             }
 
-            // 重新填滿班別下拉選單
             const select = document.getElementById('classSelect');
             select.innerHTML = '<option value="">-- 請選擇班別 --</option>';
             Object.keys(processedData).sort().forEach(c => select.add(new Option(c, c)));
@@ -356,7 +329,6 @@
 
         window.renderAllCharts = function() {
             updateMacroCharts();
-            // 風險名單
             const riskList = [];
             Object.values(processedData).flat().forEach(s => {
                 let drop=0, valid=0;
@@ -369,17 +341,14 @@
             generateAIReport();
         };
 
-        // 宏觀圖表
         window.updateMacroCharts = function() {
             const subject = document.getElementById('macroSubjectSelect').value;
             const classes = Object.keys(classStats).sort();
             
-            // Bar Chart
             const t1 = { x: classes, y: classes.map(c => classStats[c][subject].improved), name: '相對進步', type: 'bar', marker: { color: '#2ca02c' } };
             const t2 = { x: classes, y: classes.map(c => classStats[c][subject].regressed), name: '相對退步', type: 'bar', marker: { color: '#d62728' } };
             Plotly.newPlot('chart-bar-stats', [t1, t2], { barmode: 'group', margin: {t:30,b:40} });
 
-            // Line Chart
             const lines = [];
             classes.forEach(cls => {
                 const o = classStats[cls][subject].avgOld, n = classStats[cls][subject].avgNew;
@@ -388,7 +357,6 @@
             lines.push({ x: ['舊平均', '新平均'], y: [globalMeans[subject].old, globalMeans[subject].new], mode: 'lines+markers', name: '全級平均', line: { color: 'black', width: 4, dash: 'dot' } });
             Plotly.newPlot('chart-line-avg', lines, { margin: {t:30,b:40} });
 
-            // Dist Chart
             const hists = [];
             classes.forEach((cls, i) => {
                 const scores = [];
@@ -422,7 +390,6 @@
             window.drawDetailChart();
         };
 
-        // 詳細圖表 (包含 V28.8 的排序修正)
         window.drawDetailChart = function() {
             const cls = document.getElementById('classSelect').value;
             const viewMode = document.getElementById('viewMode').value; 
@@ -431,13 +398,12 @@
             
             let students = [...processedData[cls]];
             
-            // 排序邏輯修正 (V28.8)
             if (viewMode === 'all') { 
                 students.sort((a, b) => (b.classNum || 0) - (a.classNum || 0)); 
             } else { 
                 const sub = viewMode; 
                 students.sort((a, b) => { 
-                    if (sortMode === 'scoreNew') return (a[sub].new || 0) - (b[sub].new || 0); // 低->高 (顯示時高在頂)
+                    if (sortMode === 'scoreNew') return (a[sub].new || 0) - (b[sub].new || 0);
                     if (sortMode === 'scoreOld') return (a[sub].old || 0) - (b[sub].old || 0);
                     if (sortMode === 'diff') return (a[sub].diff || 0) - (b[sub].diff || 0);
                     return (b.classNum || 0) - (a.classNum || 0); 
@@ -493,7 +459,36 @@
     <style>
         body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f4f9; margin: 0; padding: 10px; color: #333; }
         .admin-only { display: none; }
-        #login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #2c3e50; z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        
+        /* 修正的登入樣式 */
+        #login-overlay { 
+            position: fixed; 
+            top: 0; left: 0; right: 0; bottom: 0; 
+            width: 100%; height: 100%; 
+            background: #2c3e50; 
+            z-index: 9999; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+        }
+        .login-box {
+            background: white; 
+            padding: 30px; 
+            border-radius: 10px; 
+            width: 300px; 
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        .login-input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            box-sizing: border-box; /* 關鍵修正：防止寬度溢出 */
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
         .container { max-width: 1400px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         .nav-bar { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #eee; }
         .nav-btn { flex: 1; padding: 10px; border: none; background: #e0e0e0; cursor: pointer; border-radius: 8px 8px 0 0; font-weight: bold; }
@@ -501,7 +496,6 @@
         .control-panel { background: #e9ecef; padding: 15px; border-radius: 8px; display: grid; gap: 10px; }
         .cloud-actions { display: none; gap: 10px; padding: 15px; background: #f1f8ff; margin-top: 10px; border-radius: 8px; justify-content: center; }
         
-        /* 新增：分班切換工具列樣式 */
         .grouping-bar { 
             display: none; 
             background: #fff3cd; border: 1px solid #ffeeba; color: #856404; 
@@ -525,10 +519,10 @@
 <body>
 
 <div id="login-overlay">
-    <div style="background:white; padding:30px; border-radius:10px; width:300px; text-align:center;">
+    <div class="login-box">
         <h2>🔐 登入</h2>
-        <input type="email" id="loginEmail" placeholder="Email" style="width:100%; padding:10px; margin:10px 0;">
-        <input type="password" id="loginPass" placeholder="Password" style="width:100%; padding:10px; margin:10px 0;">
+        <input type="email" id="loginEmail" placeholder="Email" class="login-input">
+        <input type="password" id="loginPass" placeholder="Password" class="login-input">
         <button onclick="window.performLogin()" class="primary-btn">Login</button>
     </div>
 </div>
