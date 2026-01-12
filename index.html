@@ -7,8 +7,7 @@
     
     <!-- 核心函式庫 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
-    <!-- 修正：指定 Plotly 版本 (v2.35.2) 以解決 console 警告 -->
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script> <!-- 已修正 Plotly 版本 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-statistics/7.7.0/simple-statistics.min.js"></script>
 
@@ -19,7 +18,7 @@
 
     <script>
         // ============================================================
-        // ⚠️⚠️⚠️ 【管理員設定區】 ⚠️⚠️⚠️
+        // ⚠️⚠️⚠️ 【設定區】 ⚠️⚠️⚠️
         // ============================================================
         
         // 1. 請填入 Firebase 設定
@@ -49,183 +48,86 @@
         
         // 數據變數
         var rawInfo = [], rawOld = [], rawNew = [];
-        var rawInfoHeaders = []; // 用於動態分班選單
+        var rawInfoHeaders = []; 
         var cachedColIndices = {}; 
         var cachedValidRegNos = new Set();
-        var cachedMapOld = {}, cachedMapNew = {}; // 緩存分數映射，供動態切換使用
+        var cachedMapOld = {}, cachedMapNew = {}, cachedGlobalMeans = {}, cachedGlobalSDs = {};
 
         var processedData = {};
         var classStats = {}; 
-        var globalMeans = {};
-        var globalSDs = {};
         var processedDataExport = null; 
         var currentGrade = '1';
 
         // 初始化 Firebase
         document.addEventListener('DOMContentLoaded', () => {
-            if (typeof firebase === 'undefined') {
-                alert("❌ 無法載入 Firebase，請檢查網路。");
-                return;
-            }
-
+            if (typeof firebase === 'undefined') return; 
             try {
-                if (!firebase.apps.length) {
-                    firebase.initializeApp(firebaseConfig);
-                }
+                if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
                 db = firebase.firestore();
                 auth = firebase.auth();
                 
-                // 監聽登入狀態
                 auth.onAuthStateChanged((user) => {
                     if (user) {
                         currentUserIsAdmin = ADMIN_EMAILS.some(email => email.toLowerCase() === user.email.toLowerCase());
                         document.getElementById('login-overlay').style.display = 'none';
                         document.getElementById('main-app').style.display = 'block';
                         
-                        const roleText = currentUserIsAdmin ? "管理員 (可編輯)" : "老師 (唯讀)";
-                        const roleColor = currentUserIsAdmin ? "#d32f2f" : "#2e7d32";
-                        document.getElementById('user-email-display').innerHTML = `
-                            <span style="color:${roleColor}; font-weight:bold; font-size:0.9em; margin-right:5px;">[${roleText}]</span> 
-                            ${user.email}`;
+                        const roleText = currentUserIsAdmin ? "管理員" : "老師";
+                        document.getElementById('user-email-display').innerHTML = `<b>[${roleText}]</b> ${user.email}`;
+                        document.querySelectorAll('.admin-only').forEach(el => el.style.display = currentUserIsAdmin ? 'inline-flex' : 'none');
                         
-                        document.querySelectorAll('.admin-only').forEach(el => {
-                            el.style.display = currentUserIsAdmin ? 'inline-flex' : 'none';
-                        });
-
-                        const statusDiv = document.getElementById('cloudStatus');
-                        if(currentUserIsAdmin) {
-                            statusDiv.innerText = "✅ 管理員模式：雲端連線成功";
-                            statusDiv.style.backgroundColor = "#e8f5e9";
-                        } else {
-                            statusDiv.innerText = "👁️ 檢視模式：雲端連線成功";
-                            statusDiv.style.backgroundColor = "#e3f2fd";
-                            statusDiv.style.color = "#0d47a1";
-                        }
-
+                        // 登入後嘗試讀取
                         window.loadFromCloud_Impl('1'); 
                     } else {
                         document.getElementById('login-overlay').style.display = 'flex';
                         document.getElementById('main-app').style.display = 'none';
                     }
                 });
-
-            } catch (e) {
-                console.error("Firebase Init Error:", e);
-                alert("初始化失敗: " + e.message);
-            }
+            } catch (e) { console.error(e); }
         });
 
-        // --- 登入功能 ---
+        // --- 登入/登出 ---
         window.performLogin = function() {
-            const emailField = document.getElementById('loginEmail');
-            const passField = document.getElementById('loginPass');
-            const btn = document.getElementById('btnLoginBtn');
-            const msg = document.getElementById('loginMsg');
-
-            // 錯誤檢查：確保元素存在
-            if (!emailField || !passField || !btn || !msg) {
-                console.error("找不到登入表單元素");
-                return;
-            }
-
-            const email = emailField.value;
-            const pass = passField.value;
-
-            if(!email || !pass) {
-                msg.innerText = "請輸入帳號與密碼";
-                return;
-            }
-
-            btn.disabled = true;
-            btn.innerText = "驗證中...";
-            msg.innerText = "";
-
-            if (!auth) {
-                 msg.innerText = "Firebase 未初始化，請檢查設定";
-                 btn.disabled = false;
-                 btn.innerText = "Login";
-                 return;
-            }
-
-            auth.signInWithEmailAndPassword(email, pass)
-                .catch((error) => {
-                    btn.disabled = false;
-                    btn.innerText = "Login";
-                    let t = "登入失敗";
-                    if(error.code === 'auth/wrong-password') t = "密碼錯誤";
-                    if(error.code === 'auth/user-not-found') t = "找不到此帳號";
-                    msg.innerText = `❌ ${t}`;
-                });
+            const e = document.getElementById('loginEmail').value, p = document.getElementById('loginPass').value;
+            if(auth) auth.signInWithEmailAndPassword(e, p).catch(err => alert("登入失敗: " + err.message));
         };
-
-        window.performLogout = function() {
-            if(auth) auth.signOut().then(() => location.reload());
-            else location.reload();
-        };
+        window.performLogout = function() { if(auth) auth.signOut().then(() => location.reload()); };
 
         // --- 雲端功能 ---
         window.saveToCloud_Impl = async function() {
-            if (!currentUserIsAdmin) { alert("❌ 權限不足：您是唯讀帳號。"); return; }
-            if(!processedDataExport) { alert("❌ 沒有數據可儲存！"); return; }
-            
-            const grade = window.currentGrade;
-            const btn = document.getElementById('btnSaveCloud');
-            const originalText = btn.innerText;
-            btn.innerText = "☁️ 儲存中...";
-            btn.disabled = true;
-
+            if (!currentUserIsAdmin || !processedDataExport) return alert("無法儲存");
             try {
-                const jsonString = JSON.stringify(processedDataExport, (key, val) => 
-                    (typeof val === 'number' && isNaN(val)) ? "###NaN###" : val
-                );
-                
-                await db.collection("grades").doc(grade).set({
-                    data: JSON.parse(jsonString),
+                await db.collection("grades").doc(currentGrade).set({
+                    data: JSON.stringify(processedDataExport),
                     updatedAt: new Date().toLocaleString(),
                     editor: auth.currentUser.email
                 });
-                
-                alert(`✅ P${grade} 數據已成功上傳！`);
-                document.getElementById('cloudStatus').innerText = `✅ P${grade} 數據已同步 (更新於: ${new Date().toLocaleString()})`;
-            } catch (e) {
-                console.error(e);
-                alert("❌ 儲存失敗！\n" + e.message);
-            }
-            btn.innerText = originalText;
-            btn.disabled = false;
+                alert("✅ 儲存成功");
+            } catch (e) { alert("儲存失敗: " + e.message); }
         };
 
         window.loadFromCloud_Impl = async function(grade) {
-            const statusDiv = document.getElementById('cloudStatus');
-            statusDiv.innerText = `⏳ 讀取 P${grade} 中...`;
             try {
-                const docRef = db.collection("grades").doc(grade);
-                const docSnap = await docRef.get();
-                if (docSnap.exists) {
-                    const d = docSnap.data().data;
-                    const cleanData = JSON.parse(JSON.stringify(d), (k, v) => v === "###NaN###" ? NaN : v);
-                    
-                    window.processedData = cleanData.processedData;
-                    window.classStats = cleanData.classStats;
-                    window.globalMeans = cleanData.globalMeans;
-                    window.globalSDs = cleanData.globalSDs;
-                    window.processedDataExport = cleanData;
+                const doc = await db.collection("grades").doc(grade).get();
+                if (doc.exists) {
+                    const d = JSON.parse(doc.data().data);
+                    window.processedData = d.processedData;
+                    window.classStats = d.classStats;
+                    window.globalMeans = d.globalMeans;
+                    window.globalSDs = d.globalSDs;
+                    window.processedDataExport = d;
                     
                     document.getElementById('grouping-bar').style.display = 'none'; 
-                    
                     window.restoreDashboardUI(true);
-                    
-                    let roleMsg = currentUserIsAdmin ? "" : " (唯讀)";
-                    statusDiv.innerText = `✅ 已載入 P${grade}${roleMsg} (更新於: ${docSnap.data().updatedAt})`;
+                    document.getElementById('cloudStatus').innerText = `✅ P${grade} 已載入`;
                 } else {
-                    statusDiv.innerText = `ℹ️ P${grade} 無數據`;
-                    if(currentUserIsAdmin) window.resetToUploadMode();
-                    else alert("此年級尚無數據。");
+                    document.getElementById('cloudStatus').innerText = `ℹ️ P${grade} 無數據`;
+                    // 修正點：若無數據，僅切換 UI，不再 reload 頁面
+                    if(currentUserIsAdmin) {
+                        window.resetToUploadMode(); 
+                    }
                 }
-            } catch (e) {
-                console.error(e);
-                statusDiv.innerText = `❌ 讀取錯誤: ${e.message}`;
-            }
+            } catch (e) { console.error(e); }
         };
 
         window.switchGradeUI = function(grade) {
@@ -314,7 +216,6 @@
             cachedMapOld = getScores(rawOld, getVal('colOldReg'), getVal('colOldChi'), getVal('colOldEng'), getVal('colOldMath'));
             cachedMapNew = getScores(rawNew, getVal('colNewReg'), getVal('colNewChi'), getVal('colNewEng'), getVal('colNewMath'), getVal('colNewClassNum'));
 
-            // 計算全級平均
             let sums = {chi:{o:0,n:0,c:0,arr:[]}, eng:{o:0,n:0,c:0,arr:[]}, math:{o:0,n:0,c:0,arr:[]}};
             [cachedMapOld, cachedMapNew].forEach((map, isNew) => {
                 Object.keys(map).forEach(reg => {
@@ -330,11 +231,13 @@
                 });
             });
 
-            globalMeans = {}; globalSDs = {};
+            cachedGlobalMeans = {}; cachedGlobalSDs = {};
             ['chi','eng','math'].forEach(sub => {
-                globalMeans[sub] = { old: sums[sub].c ? (sums[sub].o / sums[sub].c) : 0, new: sums[sub].c ? (sums[sub].n / sums[sub].c) : 0 };
-                globalSDs[sub] = sums[sub].arr.length > 1 ? ss.standardDeviation(sums[sub].arr) : 15;
+                cachedGlobalMeans[sub] = { old: sums[sub].c ? (sums[sub].o / sums[sub].c) : 0, new: sums[sub].c ? (sums[sub].n / sums[sub].c) : 0 };
+                cachedGlobalSDs[sub] = sums[sub].arr.length > 1 ? ss.standardDeviation(sums[sub].arr) : 15;
             });
+            window.globalMeans = cachedGlobalMeans;
+            window.globalSDs = cachedGlobalSDs;
 
             initGroupingSwitcher(cachedColIndices.class);
             applyGrouping(cachedColIndices.class);
@@ -379,7 +282,7 @@
                             
                             let diff = NaN;
                             if(!isNaN(oldScore) && !isNaN(newScore)) {
-                                diff = (newScore - globalMeans[sub].new) - (oldScore - globalMeans[sub].old);
+                                diff = (newScore - cachedGlobalMeans[sub].new) - (oldScore - cachedGlobalMeans[sub].old);
                             }
                             student[sub] = { old: oldScore, new: newScore, diff: diff };
                         });
@@ -412,7 +315,7 @@
                 });
             });
 
-            processedDataExport = { processedData, classStats, globalMeans: globalMeans, globalSDs: globalSDs };
+            processedDataExport = { processedData, classStats, globalMeans: cachedGlobalMeans, globalSDs: cachedGlobalSDs };
             restoreDashboardUI(false);
         };
 
@@ -465,7 +368,7 @@
                 const o = classStats[cls][subject].avgOld, n = classStats[cls][subject].avgNew;
                 if(o && n) lines.push({ x: ['舊平均', '新平均'], y: [o, n], mode: 'lines+markers', name: cls });
             });
-            lines.push({ x: ['舊平均', '新平均'], y: [globalMeans[subject].old, globalMeans[subject].new], mode: 'lines+markers', name: '全級平均', line: { color: 'black', width: 4, dash: 'dot' } });
+            lines.push({ x: ['舊平均', '新平均'], y: [cachedGlobalMeans[subject].old, cachedGlobalMeans[subject].new], mode: 'lines+markers', name: '全級平均', line: { color: 'black', width: 4, dash: 'dot' } });
             Plotly.newPlot('chart-line-avg', lines, { margin: {t:30,b:40} });
 
             const hists = [];
@@ -476,7 +379,7 @@
             });
             Plotly.newPlot('chart-dist', hists, { barmode: 'stack', margin: {t:30,b:40} });
             
-            const diff = (globalMeans[subject].new - globalMeans[subject].old).toFixed(1);
+            const diff = (cachedGlobalMeans[subject].new - cachedGlobalMeans[subject].old).toFixed(1);
             document.getElementById('macro-score-diff').innerText = `全級變動: ${diff>0?'+':''}${diff}`;
         };
 
@@ -529,7 +432,7 @@
 
             active.forEach((L, i) => {
                 const axis = viewMode==='all' ? (i===0?'x':(i===1?'x2':'x3')) : 'x';
-                const gm = globalMeans[L.k];
+                const gm = cachedGlobalMeans[L.k];
                 shapes.push({ type: 'line', x0: gm.old, x1: gm.old, y0:0, y1:1, xref: axis, yref: 'paper', line: { color: '#ccc', dash: 'dot' } });
                 shapes.push({ type: 'line', x0: gm.new, x1: gm.new, y0:0, y1:1, xref: axis, yref: 'paper', line: { color: '#666', dash: 'dash' } });
 
@@ -564,8 +467,29 @@
         window.copyAiPrompt = function() { navigator.clipboard.writeText(globalAiPromptText); alert("已複製"); };
         window.downloadChart = function(id, name) { Plotly.downloadImage(id, {format:'png', width:1200, height:800, filename:name}); };
         window.downloadDiv = function(id, name) { html2canvas(document.getElementById(id)).then(c => { const a=document.createElement('a'); a.download=name+'.png'; a.href=c.toDataURL(); a.click(); }); };
-        window.editSettings = function() { window.location.reload(); }; 
-        window.resetToUploadMode = function() { window.location.reload(); };
+        window.editSettings = function() {
+            document.getElementById('mainControlPanel').style.display = 'grid'; 
+            document.getElementById('reportHeader').style.display = 'none';
+            document.getElementById('cloudActions').style.display = 'none';
+            document.getElementById('grouping-bar').style.display = 'none';
+            ['stats-banner', 'macro-section', 'risk-section', 'ranking-section', 'detail-section', 'ai-section'].forEach(id => document.getElementById(id).style.display = 'none');
+            ['stuSettings', 'oldScoreSettings', 'newScoreSettings'].forEach(id => document.getElementById(id).style.display = 'block');
+            document.getElementById('mainControlPanel').scrollIntoView({ behavior: 'smooth' });
+        };
+        // 修正： resetToUploadMode 不再 reload，只重置 UI
+        window.resetToUploadMode = function() {
+            rawInfo = []; rawOld = []; rawNew = [];
+            processedDataExport = null;
+            document.getElementById('mainControlPanel').style.display = 'grid'; 
+            document.getElementById('reportHeader').style.display = 'none';
+            document.getElementById('cloudActions').style.display = 'none';
+            document.getElementById('grouping-bar').style.display = 'none';
+            ['stats-banner', 'macro-section', 'risk-section', 'ranking-section', 'detail-section', 'ai-section'].forEach(id => document.getElementById(id).style.display = 'none');
+            ['msg-info', 'msg-old', 'msg-new'].forEach(id => document.getElementById(id).innerText = '');
+            ['stuSettings', 'oldScoreSettings', 'newScoreSettings'].forEach(id => document.getElementById(id).style.display = 'none');
+            document.getElementById('cloudStatus').innerText = "ℹ️ 無雲端數據，請上傳新資料";
+        };
+
     </script>
 
     <style>
@@ -693,7 +617,7 @@
 
         <div id="cloudActions" class="cloud-actions">
             <button onclick="window.resetToUploadMode()" style="background:#6c757d; color:white;">🗑️ 重新上傳</button>
-            <button id="btnSaveCloud" onclick="window.saveToCloud_Impl()" style="background:#17a2b8; color:white;">☁️ 儲存至雲端</button>
+            <button onclick="window.saveToCloud_Impl()" style="background:#17a2b8; color:white;">☁️ 儲存至雲端</button>
         </div>
 
         <div id="stats-banner" style="display:none;"></div>
