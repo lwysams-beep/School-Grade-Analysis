@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>全級學術成績分析系統 (V29.2 標題更新版)</title>
+    <title>全級學術成績分析系統 (V29.3 循環修正版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
@@ -73,6 +73,8 @@
                         const roleText = currentUserIsAdmin ? "管理員" : "老師";
                         document.getElementById('user-email-display').innerHTML = `<b>[${roleText}]</b> ${user.email}`;
                         document.querySelectorAll('.admin-only').forEach(el => el.style.display = currentUserIsAdmin ? 'inline-flex' : 'none');
+                        
+                        // 這裡會觸發讀取，若無數據會進入 resetToUploadMode
                         window.loadFromCloud_Impl('1'); 
                     } else {
                         document.getElementById('login-overlay').style.display = 'flex';
@@ -118,6 +120,7 @@
                     document.getElementById('cloudStatus').innerText = `✅ P${grade} 已載入`;
                 } else {
                     document.getElementById('cloudStatus').innerText = `ℹ️ P${grade} 無數據`;
+                    // 若無數據且是管理員，切換到上傳模式，但不重整頁面
                     if(currentUserIsAdmin) window.resetToUploadMode();
                 }
             } catch (e) { console.error(e); }
@@ -128,6 +131,7 @@
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.nav-btn')[grade-1].classList.add('active');
             document.getElementById('currentGradeBadge').innerText = `P${grade}`;
+            // 切換年級時嘗試讀取雲端
             if(auth && auth.currentUser) window.loadFromCloud_Impl(grade);
         };
 
@@ -452,8 +456,30 @@
         window.copyAiPrompt = function() { navigator.clipboard.writeText(globalAiPromptText); alert("已複製"); };
         window.downloadChart = function(id, name) { Plotly.downloadImage(id, {format:'png', width:1200, height:800, filename:name}); };
         window.downloadDiv = function(id, name) { html2canvas(document.getElementById(id)).then(c => { const a=document.createElement('a'); a.download=name+'.png'; a.href=c.toDataURL(); a.click(); }); };
+        
+        // ⚠️⚠️⚠️ 關鍵修正: 重置功能現在只會清空狀態並顯示上傳區，不再重新整理頁面 ⚠️⚠️⚠️
+        window.resetToUploadMode = function() {
+            // 切換 UI 顯示
+            document.getElementById('mainControlPanel').style.display = 'grid'; 
+            document.getElementById('reportHeader').style.display = 'none';
+            document.getElementById('cloudActions').style.display = 'none';
+            document.getElementById('grouping-bar').style.display = 'none';
+            
+            // 隱藏圖表
+            ['stats-banner', 'macro-section', 'risk-section', 'ranking-section', 'detail-section', 'ai-section'].forEach(id => {
+                document.getElementById(id).style.display = 'none';
+            });
+            
+            // 提示訊息
+            document.getElementById('cloudStatus').innerText = "ℹ️ 無雲端數據，請上傳新資料";
+            
+            // 清空暫存的匯出數據，防止誤存
+            processedDataExport = null;
+        };
+
+        // 編輯設定按鈕仍保留 reload，因為那是使用者主動觸發的
         window.editSettings = function() { window.location.reload(); }; 
-        window.resetToUploadMode = function() { window.location.reload(); };
+
     </script>
 
     <style>
@@ -476,7 +502,7 @@
             background: white; 
             padding: 30px; 
             border-radius: 10px; 
-            width: 320px; /* 稍微加寬以容納長標題 */
+            width: 320px;
             text-align: center;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
