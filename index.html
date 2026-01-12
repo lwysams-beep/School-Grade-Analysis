@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>全級學術成績分析系統 (V29.3 循環修正版)</title>
+    <title>全級學術成績分析系統 (V29.5 動態分班+平均分版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
@@ -46,13 +46,15 @@
         
         // 數據變數
         var rawInfo = [], rawOld = [], rawNew = [];
-        var rawInfoHeaders = []; 
-        var cachedMapOld = {}, cachedMapNew = {}, cachedGlobalMeans = {}, cachedGlobalSDs = {};
-        var cachedValidRegNos = new Set();
+        var rawInfoHeaders = []; // 用於動態分班選單
         var cachedColIndices = {}; 
+        var cachedValidRegNos = new Set();
+        var cachedMapOld = {}, cachedMapNew = {}; // 緩存分數映射，供動態切換使用
 
         var processedData = {};
         var classStats = {}; 
+        var globalMeans = {};
+        var globalSDs = {};
         var processedDataExport = null; 
         var currentGrade = '1';
 
@@ -74,7 +76,6 @@
                         document.getElementById('user-email-display').innerHTML = `<b>[${roleText}]</b> ${user.email}`;
                         document.querySelectorAll('.admin-only').forEach(el => el.style.display = currentUserIsAdmin ? 'inline-flex' : 'none');
                         
-                        // 這裡會觸發讀取，若無數據會進入 resetToUploadMode
                         window.loadFromCloud_Impl('1'); 
                     } else {
                         document.getElementById('login-overlay').style.display = 'flex';
@@ -115,12 +116,11 @@
                     window.globalSDs = d.globalSDs;
                     window.processedDataExport = d;
                     
-                    document.getElementById('grouping-bar').style.display = 'none'; 
+                    document.getElementById('grouping-bar').style.display = 'none'; // 雲端讀取時隱藏分班條
                     window.restoreDashboardUI(true);
                     document.getElementById('cloudStatus').innerText = `✅ P${grade} 已載入`;
                 } else {
                     document.getElementById('cloudStatus').innerText = `ℹ️ P${grade} 無數據`;
-                    // 若無數據且是管理員，切換到上傳模式，但不重整頁面
                     if(currentUserIsAdmin) window.resetToUploadMode();
                 }
             } catch (e) { console.error(e); }
@@ -131,7 +131,6 @@
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.nav-btn')[grade-1].classList.add('active');
             document.getElementById('currentGradeBadge').innerText = `P${grade}`;
-            // 切換年級時嘗試讀取雲端
             if(auth && auth.currentUser) window.loadFromCloud_Impl(grade);
         };
 
@@ -147,7 +146,7 @@
                     const h = res.data[0];
                     if(type === 'info') { 
                         rawInfo = res.data; 
-                        rawInfoHeaders = h; 
+                        rawInfoHeaders = h; // 保存 Header 供動態分班使用
                         initDropdown('stuSettings', h, [
                             {id:'colClass', keys:['班','class']},
                             {id:'colName', keys:['姓名','name']},
@@ -175,6 +174,7 @@
             });
         }
 
+        // 修改後的 processData (計算全級平均後，交由 applyGrouping 處理分班)
         window.processData = function() {
             if (!rawInfo.length || !rawOld.length || !rawNew.length) return alert("請上傳所有檔案");
             
@@ -213,6 +213,7 @@
             cachedMapOld = getScores(rawOld, getVal('colOldReg'), getVal('colOldChi'), getVal('colOldEng'), getVal('colOldMath'));
             cachedMapNew = getScores(rawNew, getVal('colNewReg'), getVal('colNewChi'), getVal('colNewEng'), getVal('colNewMath'), getVal('colNewClassNum'));
 
+            // 計算全級平均
             let sums = {chi:{o:0,n:0,c:0,arr:[]}, eng:{o:0,n:0,c:0,arr:[]}, math:{o:0,n:0,c:0,arr:[]}};
             [cachedMapOld, cachedMapNew].forEach((map, isNew) => {
                 Object.keys(map).forEach(reg => {
@@ -228,15 +229,15 @@
                 });
             });
 
-            cachedGlobalMeans = {}; cachedGlobalSDs = {};
+            globalMeans = {}; globalSDs = {};
             ['chi','eng','math'].forEach(sub => {
-                cachedGlobalMeans[sub] = { old: sums[sub].c ? (sums[sub].o / sums[sub].c) : 0, new: sums[sub].c ? (sums[sub].n / sums[sub].c) : 0 };
-                cachedGlobalSDs[sub] = sums[sub].arr.length > 1 ? ss.standardDeviation(sums[sub].arr) : 15;
+                globalMeans[sub] = { old: sums[sub].c ? (sums[sub].o / sums[sub].c) : 0, new: sums[sub].c ? (sums[sub].n / sums[sub].c) : 0 };
+                globalSDs[sub] = sums[sub].arr.length > 1 ? ss.standardDeviation(sums[sub].arr) : 15;
             });
-            window.globalMeans = cachedGlobalMeans;
-            window.globalSDs = cachedGlobalSDs;
 
+            // 初始化動態分班列
             initGroupingSwitcher(cachedColIndices.class);
+            // 執行第一次分班與計算
             applyGrouping(cachedColIndices.class);
         };
 
@@ -254,6 +255,7 @@
             applyGrouping(newIdx);
         };
 
+        // 新增：動態分班與平均分計算邏輯
         window.applyGrouping = function(classColIdx) {
             processedData = {};
             const cleanReg = (v) => v ? String(v).replace(/[\s\uFEFF\xA0]/g, '').toUpperCase() : "";
@@ -270,15 +272,24 @@
                     
                     if(['chi','eng','math'].some(sub => !isNaN(o[sub]) || !isNaN(n[sub]))) {
                         const student = { name: name, cls: cls, classNum: n.classNum || 0 };
+                        
+                        // 計算個別科目與差異
+                        let totalNew = 0, countNew = 0;
                         ['chi','eng','math'].forEach(sub => {
                             const oldScore = o[sub];
                             const newScore = n[sub];
+                            if (!isNaN(newScore)) { totalNew += newScore; countNew++; }
+                            
                             let diff = NaN;
                             if(!isNaN(oldScore) && !isNaN(newScore)) {
-                                diff = (newScore - cachedGlobalMeans[sub].new) - (oldScore - cachedGlobalMeans[sub].old);
+                                diff = (newScore - globalMeans[sub].new) - (oldScore - globalMeans[sub].old);
                             }
                             student[sub] = { old: oldScore, new: newScore, diff: diff };
                         });
+
+                        // 新增：計算平均分 (若無分數則為0)
+                        student.avg = countNew > 0 ? (totalNew / countNew) : 0;
+
                         if(!processedData[cls]) processedData[cls] = [];
                         processedData[cls].push(student);
                     }
@@ -287,6 +298,7 @@
 
             if (Object.keys(processedData).length === 0) { alert("⚠️ 此分班欄位沒有產生有效數據！"); return; }
 
+            // 計算班級統計
             classStats = {};
             Object.keys(processedData).sort().forEach(cls => {
                 classStats[cls] = {};
@@ -305,7 +317,7 @@
                 });
             });
 
-            processedDataExport = { processedData, classStats, globalMeans: cachedGlobalMeans, globalSDs: cachedGlobalSDs };
+            processedDataExport = { processedData, classStats, globalMeans, globalSDs };
             restoreDashboardUI(false);
         };
 
@@ -407,6 +419,7 @@
             } else { 
                 const sub = viewMode; 
                 students.sort((a, b) => { 
+                    if (sortMode === 'avg') return (b.avg || 0) - (a.avg || 0); // 新增：依平均分排序
                     if (sortMode === 'scoreNew') return (a[sub].new || 0) - (b[sub].new || 0);
                     if (sortMode === 'scoreOld') return (a[sub].old || 0) - (b[sub].old || 0);
                     if (sortMode === 'diff') return (a[sub].diff || 0) - (b[sub].diff || 0);
@@ -455,29 +468,20 @@
         }
         window.copyAiPrompt = function() { navigator.clipboard.writeText(globalAiPromptText); alert("已複製"); };
         window.downloadChart = function(id, name) { Plotly.downloadImage(id, {format:'png', width:1200, height:800, filename:name}); };
-        window.downloadDiv = function(id, name) { html2canvas(document.getElementById(id)).then(c => { const a=document.createElement('a'); a.download=name+'.png'; a.href=c.toDataURL(); a.click(); }); };
         
-        // ⚠️⚠️⚠️ 關鍵修正: 重置功能現在只會清空狀態並顯示上傳區，不再重新整理頁面 ⚠️⚠️⚠️
         window.resetToUploadMode = function() {
-            // 切換 UI 顯示
             document.getElementById('mainControlPanel').style.display = 'grid'; 
             document.getElementById('reportHeader').style.display = 'none';
             document.getElementById('cloudActions').style.display = 'none';
-            document.getElementById('grouping-bar').style.display = 'none';
+            document.getElementById('grouping-bar').style.display = 'none'; // 重置時隱藏分班條
             
-            // 隱藏圖表
             ['stats-banner', 'macro-section', 'risk-section', 'ranking-section', 'detail-section', 'ai-section'].forEach(id => {
                 document.getElementById(id).style.display = 'none';
             });
-            
-            // 提示訊息
             document.getElementById('cloudStatus').innerText = "ℹ️ 無雲端數據，請上傳新資料";
-            
-            // 清空暫存的匯出數據，防止誤存
             processedDataExport = null;
         };
 
-        // 編輯設定按鈕仍保留 reload，因為那是使用者主動觸發的
         window.editSettings = function() { window.location.reload(); }; 
 
     </script>
@@ -486,7 +490,6 @@
         body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f4f9; margin: 0; padding: 10px; color: #333; }
         .admin-only { display: none; }
         
-        /* 修正的登入樣式 */
         #login-overlay { 
             position: fixed; 
             top: 0; left: 0; right: 0; bottom: 0; 
@@ -522,6 +525,7 @@
         .control-panel { background: #e9ecef; padding: 15px; border-radius: 8px; display: grid; gap: 10px; }
         .cloud-actions { display: none; gap: 10px; padding: 15px; background: #f1f8ff; margin-top: 10px; border-radius: 8px; justify-content: center; }
         
+        /* 恢復 V29 的黃色分班條樣式 */
         .grouping-bar { 
             display: none; 
             background: #fff3cd; border: 1px solid #ffeeba; color: #856404; 
@@ -647,7 +651,7 @@
                         <option value="scoreNew">依新分數(高至低)</option>
                         <option value="scoreOld">依舊分數(高至低)</option>
                         <option value="diff">依進步幅度</option>
-                    </select>
+                        <option value="avg">依平均分(新)</option> </select>
                 </span>
                 <button class="download-btn" onclick="downloadChart('chart-main','Detail')">下載圖表</button>
             </div>
