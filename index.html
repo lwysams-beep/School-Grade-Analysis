@@ -581,12 +581,45 @@
                 traces.push({ x: students.map(s => s[L.key].old), y: names, xaxis: axisName, yaxis: 'y', mode: 'markers', marker: { color: '#e0e0e0', size: 10, line: {color:'#ccc', width:1} }, hoverinfo: 'x+y', showlegend: false });
                 traces.push({ x: students.map(s => s[L.key].new), y: names, xaxis: axisName, yaxis: 'y', mode: 'markers', marker: { color: colors, size: 12, line: {width:1,color:'white'} }, hoverinfo: 'x+y', showlegend: false });
 
-                students.forEach(s => {
-                    if(isNaN(s[L.key].old) || isNaN(s[L.key].new)) return;
-                    const c = s[L.key].diff >= 0 ? '#2ca02c' : '#d62728';
-                    annotations.push({ x: s[L.key].new, y: `${s.classNum || '-'}　${s.name}`, ax: s[L.key].old, ay: s.name, xref: axisName, yref: 'y', axref: axisName, ayref: 'y', showarrow: true, arrowhead: 2, arrowsize: 1, arrowwidth: 2, arrowcolor: c });
-                    annotations.push({ x: Math.max(s[L.key].old, s[L.key].new)+3, y: `${s.classNum || '-'}　${s.name}`, xref: axisName, yref: 'y', text: `${s[L.key].new}`, showarrow: false, font: { color: c, size: 13, weight:'bold' }, xanchor: 'left' });
-                });
+                
+students.forEach(s => {
+    if(isNaN(s[L.key].old) || isNaN(s[L.key].new)) return;
+
+    const c = s[L.key].diff >= 0 ? '#2ca02c' : '#d62728';
+
+    // 統一使用「班號＋姓名」，確保箭嘴與學生位置一致
+    const studentLabel = `${s.classNum || '-'}　${s.name}`;
+
+    // 箭嘴：由舊分數指向新分數
+    annotations.push({
+        x: s[L.key].new,
+        y: studentLabel,
+        ax: s[L.key].old,
+        ay: studentLabel,
+        xref: axisName,
+        yref: 'y',
+        axref: axisName,
+        ayref: 'y',
+        showarrow: true,
+        arrowhead: 2,
+        arrowsize: 1,
+        arrowwidth: 2,
+        arrowcolor: c
+    });
+
+    // 新分數文字
+    annotations.push({
+        x: Math.max(s[L.key].old, s[L.key].new) + 3,
+        y: studentLabel,
+        xref: axisName,
+        yref: 'y',
+        text: `${s[L.key].new}`,
+        showarrow: false,
+        font: { color: c, size: 13, weight: 'bold' },
+        xanchor: 'left'
+    });
+});
+
                 annotations.push({ x: gNew, y: 1.02, xref: axisName, yref: 'paper', text: `Avg:${gNew.toFixed(0)}`, showarrow: false, font: {size: 11, color: '#666'}, xanchor: 'center' });
             });
 
