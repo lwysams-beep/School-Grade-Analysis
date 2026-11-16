@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>全級學術成績分析系統 (V28.7 排序增強版)</title>
+    <title>全級學術成績分析系統 (V28.8 排序修正版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
@@ -538,7 +538,7 @@
         };
 
         // =========================================================
-        // 修正重點：繪製詳細圖表 (支援新舊分數分開排序)
+        // 修正重點：繪製詳細圖表 (V28.8 修正排序倒轉問題)
         // =========================================================
         window.drawDetailChart = function() {
             const cls = document.getElementById('classSelect').value;
@@ -554,12 +554,13 @@
             } else { 
                 const sub = viewMode; 
                 students.sort((a, b) => { 
-                    // 1. 依新分數 (高至低)
-                    if (sortMode === 'scoreNew') return (b[sub].new || 0) - (a[sub].new || 0);
-                    // 2. 依舊分數 (高至低)
-                    if (sortMode === 'scoreOld') return (b[sub].old || 0) - (a[sub].old || 0);
-                    // 3. 依進步幅度 (大至小)
-                    if (sortMode === 'diff') return (b[sub].diff || 0) - (a[sub].diff || 0);
+                    // [V28.8 修正] Plotly Y軸順序與數據順序相反, 故倒轉排序邏輯
+                    // 1. 依新分數 (高至低) -> 視覺上高分在下
+                    if (sortMode === 'scoreNew') return (a[sub].new || 0) - (b[sub].new || 0);
+                    // 2. 依舊分數 (高至低) -> 視覺上高分在下
+                    if (sortMode === 'scoreOld') return (a[sub].old || 0) - (b[sub].old || 0);
+                    // 3. 依進步幅度 (大至小) -> 視覺上大進步在下
+                    if (sortMode === 'diff') return (a[sub].diff || 0) - (b[sub].diff || 0);
                     // 4. 預設依班號 (小至大)
                     return (a.classNum || 0) - (b.classNum || 0); 
                 }); 
@@ -589,7 +590,14 @@
                 annotations.push({ x: gNew, y: 1.02, xref: axisName, yref: 'paper', text: `Avg:${gNew.toFixed(0)}`, showarrow: false, font: {size: 11, color: '#666'}, xanchor: 'center' });
             });
 
-            const mainLayout = { title: `班別 ${cls} 詳細分析`, height: Math.max(600, students.length * 40), margin: { l: 150, r: 50, t: 80, b: 50 }, shapes: shapes, yaxis: { automargin: true, title: '', dtick: 1 }, annotations: annotations, showlegend: false, hovermode: 'closest' };
+            const mainLayout = { title: `班別 ${cls} 詳細分析`, height: Math.max(600, students.length * 40), margin: { l: 150, r: 50, t: 80, b: 50 }, shapes: shapes, 
+            yaxis: {
+    automargin: true,
+    title: '',
+    dtick: 1,
+    autorange: viewMode === 'all' ? 'reversed' : true
+},
+ annotations: annotations, showlegend: false, hovermode: 'closest' };
             if(viewMode === 'all') {
                 mainLayout.xaxis = { domain: layouts.chi.domain, title: '中文', range: [0, 115] };
                 mainLayout.xaxis2 = { domain: layouts.eng.domain, title: '英文', range: [0, 115] };
@@ -700,7 +708,7 @@
                 <button class="logout-btn" onclick="window.performLogout()">登出</button>
             </div>
         </div>
-        <div style="text-align: center; color: #666; font-size: 0.9em; margin-bottom: 15px;">V28.7 (排序增強版)</div>
+        <div style="text-align: center; color: #666; font-size: 0.9em; margin-bottom: 15px;">V28.8 (排序修正版)</div>
 
         <div class="nav-bar">
             <button class="nav-btn active" onclick="window.switchGradeUI('1')">P1</button>
