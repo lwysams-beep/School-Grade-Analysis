@@ -591,12 +591,12 @@
             });
 
             const mainLayout = { title: `班別 ${cls} 詳細分析`, height: Math.max(600, students.length * 40), margin: { l: 150, r: 50, t: 80, b: 50 }, shapes: shapes, 
-            yaxis: {
+            yaxis: {    
     automargin: true,
     title: '',
     dtick: 1,
     autorange: viewMode === 'all' ? 'reversed' : true
-},
+    },
  annotations: annotations, showlegend: false, hovermode: 'closest' };
             if(viewMode === 'all') {
                 mainLayout.xaxis = { domain: layouts.chi.domain, title: '中文', range: [0, 115] };
