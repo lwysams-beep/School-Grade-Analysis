@@ -566,7 +566,7 @@
                 }); 
             }
 
-            const names = students.map(s => s.name);
+            const names = students.map(s => `${s.classNum || '-'}　${s.name}`);
             const traces = [], annotations = [], shapes = [];
             const layouts = { chi: { domain: [0, 0.32], title: '中文科', key: 'chi' }, eng: { domain: [0.34, 0.66], title: '英文科', key: 'eng' }, math: { domain: [0.68, 1], title: '數學科', key: 'math' } };
             const activeLayouts = viewMode === 'all' ? [layouts.chi, layouts.eng, layouts.math] : [layouts[viewMode]];
@@ -584,20 +584,27 @@
                 students.forEach(s => {
                     if(isNaN(s[L.key].old) || isNaN(s[L.key].new)) return;
                     const c = s[L.key].diff >= 0 ? '#2ca02c' : '#d62728';
-                    annotations.push({ x: s[L.key].new, y: s.name, ax: s[L.key].old, ay: s.name, xref: axisName, yref: 'y', axref: axisName, ayref: 'y', showarrow: true, arrowhead: 2, arrowsize: 1, arrowwidth: 2, arrowcolor: c });
-                    annotations.push({ x: Math.max(s[L.key].old, s[L.key].new)+3, y: s.name, xref: axisName, yref: 'y', text: `${s[L.key].new}`, showarrow: false, font: { color: c, size: 13, weight:'bold' }, xanchor: 'left' });
+                    annotations.push({ x: s[L.key].new, y: `${s.classNum || '-'}　${s.name}`, ax: s[L.key].old, ay: s.name, xref: axisName, yref: 'y', axref: axisName, ayref: 'y', showarrow: true, arrowhead: 2, arrowsize: 1, arrowwidth: 2, arrowcolor: c });
+                    annotations.push({ x: Math.max(s[L.key].old, s[L.key].new)+3, y: `${s.classNum || '-'}　${s.name}`, xref: axisName, yref: 'y', text: `${s[L.key].new}`, showarrow: false, font: { color: c, size: 13, weight:'bold' }, xanchor: 'left' });
                 });
                 annotations.push({ x: gNew, y: 1.02, xref: axisName, yref: 'paper', text: `Avg:${gNew.toFixed(0)}`, showarrow: false, font: {size: 11, color: '#666'}, xanchor: 'center' });
             });
 
-            const mainLayout = { title: `班別 ${cls} 詳細分析`, height: Math.max(600, students.length * 40), margin: { l: 150, r: 50, t: 80, b: 50 }, shapes: shapes, 
-            yaxis: {    
-    automargin: true,
-    title: '',
-    dtick: 1,
-    autorange: viewMode === 'all' ? 'reversed' : true
+            const mainLayout = {
+    title: `班別 ${cls} 詳細分析`,
+    height: Math.max(600, students.length * 40),
+    margin: { l: 190, r: 50, t: 80, b: 50 },
+    shapes: shapes,
+    yaxis: {
+        automargin: true,
+        title: '',
+        dtick: 1,
+        autorange: (viewMode === 'all' || sortMode === 'classNum') ? 'reversed' : true
     },
- annotations: annotations, showlegend: false, hovermode: 'closest' };
+    annotations: annotations,
+    showlegend: false,
+    hovermode: 'closest'
+};
             if(viewMode === 'all') {
                 mainLayout.xaxis = { domain: layouts.chi.domain, title: '中文', range: [0, 115] };
                 mainLayout.xaxis2 = { domain: layouts.eng.domain, title: '英文', range: [0, 115] };
