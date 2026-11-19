@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>全級學術成績分析系統 (V28.82 排序增強修正版)</title>
+    <title>全級學術成績分析系統 (V28.83 獨立平均分修正版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
@@ -340,7 +340,7 @@
             const mapOld = getScores(rawOld, idxOldReg, idxOldChi, idxOldEng, idxOldMath);
             const mapNew = getScoresWithClassNum(rawNew, idxNewReg, idxNewChi, idxNewEng, idxNewMath, idxNewClassNum);
 
-            let sums = {chi:{o:0,n:0,c:0,arr:[]}, eng:{o:0,n:0,c:0,arr:[]}, math:{o:0,n:0,c:0,arr:[]}};
+            let sums = {chi:{o:0,n:0,cOld:0,cNew:0,arr:[]}, eng:{o:0,n:0,cOld:0,cNew:0,arr:[]}, math:{o:0,n:0,cOld:0,cNew:0,arr:[]}};
 
             [mapOld, mapNew].forEach((map, isNew) => {
                 Object.keys(map).forEach(reg => {
@@ -348,8 +348,8 @@
                         ['chi','eng','math'].forEach(sub => {
                             const val = map[reg][sub];
                             if(!isNaN(val)) {
-                                if(isNew) { sums[sub].n += val; sums[sub].c++; sums[sub].arr.push(val); }
-                                else { sums[sub].o += val; }
+                                if(isNew) { sums[sub].n += val; sums[sub].cNew++; sums[sub].arr.push(val); }
+                                else { sums[sub].o += val; sums[sub].cOld++; }
                             }
                         });
                     }
@@ -358,7 +358,7 @@
 
             globalMeans = {}; globalSDs = {};
             ['chi','eng','math'].forEach(sub => {
-                globalMeans[sub] = { old: sums[sub].c ? (sums[sub].o / sums[sub].c) : 0, new: sums[sub].c ? (sums[sub].n / sums[sub].c) : 0 };
+                globalMeans[sub] = { old: sums[sub].cOld ? (sums[sub].o / sums[sub].cOld) : 0, new: sums[sub].cNew ? (sums[sub].n / sums[sub].cNew) : 0 };
                 globalSDs[sub] = sums[sub].arr.length > 1 ? ss.standardDeviation(sums[sub].arr) : 15;
             });
 
@@ -748,7 +748,7 @@ students.forEach(s => {
                 <button class="logout-btn" onclick="window.performLogout()">登出</button>
             </div>
         </div>
-        <div style="text-align: center; color: #666; font-size: 0.9em; margin-bottom: 15px;">V28.82 (排序增強修正版)</div>
+        <div style="text-align: center; color: #666; font-size: 0.9em; margin-bottom: 15px;">V28.83 (獨立平均分修正版)</div>
 
         <div class="nav-bar">
             <button class="nav-btn active" onclick="window.switchGradeUI('1')">P1</button>
